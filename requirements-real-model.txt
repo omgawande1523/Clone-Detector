@@ -1,0 +1,7 @@
+# Install these ONLY when you have internet access and want the real
+# wav2vec2-based accuracy instead of the offline heuristic baseline.
+#   pip install -r requirements-real-model.txt
+#   set DETECTOR_BACKEND=transformer   (Windows: set DETECTOR_BACKEND=transformer)
+# First run downloads the model weights (~95MB) and caches them locally.
+torch
+transformers

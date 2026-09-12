@@ -1,0 +1,28 @@
+# virtualenvs
+venv/
+.venv/
+env/
+
+# python bytecode
+__pycache__/
+*.py[cod]
+*.pyc
+
+# runtime state, not source: voiceprints.json, audit_log.jsonl
+*.json
+*.jsonl
+
+# ...but keep project config that happens to be JSON
+!package.json
+!tsconfig.json
+
+# pytest / tooling
+.pytest_cache/
+.coverage
+htmlcov/
+
+# editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>SIH26104 — Voice Authenticity Monitor (Demo)</title>
+<style>
+  body { font-family: -apple-system, Segoe UI, sans-serif; max-width: 720px; margin: 40px auto; color: #1a1a1a; }
+  h1 { font-size: 20px; }
+  h2 { font-size: 15px; margin-top: 28px; }
+  .sub { color: #666; margin-bottom: 20px; }
+  fieldset { border: 1px solid #e5e7eb; border-radius: 8px; padding: 14px 16px; margin-top: 8px; }
+  legend { font-size: 13px; color: #555; padding: 0 6px; }
+  label { display: block; font-size: 13px; margin: 8px 0 4px; }
+  input[type=text] { width: 100%; padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 6px; box-sizing: border-box; }
+  .row { display: flex; gap: 20px; align-items: center; }
+  #dropzone, #refdrop { border: 2px dashed #aaa; border-radius: 10px; padding: 20px; text-align: center; cursor: pointer; font-size: 14px; }
+  #gauge-bar { height: 28px; border-radius: 14px; background: #e5e7eb; overflow: hidden; margin-top: 20px; }
+  #gauge-fill { height: 100%; width: 0%; background: #22c55e; transition: width 0.4s, background 0.4s; }
+  #level-label { font-weight: 600; margin-top: 8px; }
+  .breakdown { display: flex; gap: 12px; margin-top: 10px; }
+  .signal { flex: 1; background: #f9fafb; border-radius: 8px; padding: 8px 10px; font-size: 12px; }
+  .signal .val { font-size: 16px; font-weight: 600; }
+  #alert-banner { display:none; margin-top: 16px; padding: 12px 16px; border-radius: 8px; background: #fee2e2; color: #991b1b; font-weight: 600; }
+  #log { margin-top: 20px; font-family: monospace; font-size: 12px; color: #444; white-space: pre-line; }
+  button { margin-top: 12px; padding: 8px 16px; border-radius: 6px; border: none; background: #2563eb; color: white; cursor: pointer; }
+  button:disabled { background: #93c5fd; cursor: default; }
+  button.secondary { background: #6b7280; }
+</style>
+</head>
+<body>
+  <h1>Voice authenticity monitor</h1>
+  <div class="sub">SIH26104 demo — fuses acoustic, speaker-consistency, and call-context signals into one live risk score.</div>
+
+  <h2>1. Enroll a reference voice (optional)</h2>
+  <fieldset>
+    <legend>Cross-checks the call against this person's known voice</legend>
+    <label>Speaker ID</label>
+    <input type="text" id="enrollId" placeholder="e.g. ceo, cust_00123">
+    <div id="refdrop" style="margin-top:8px">Click to choose a reference .wav (10-20s of clean speech)</div>
+    <input type="file" id="refInput" accept="audio/wav" style="display:none">
+    <button id="enrollBtn" class="secondary" disabled>Enroll voiceprint</button>
+    <div id="enrollStatus" style="font-size:12px;color:#666;margin-top:6px"></div>
+  </fieldset>
+
+  <h2>2. Call context (optional)</h2>
+  <fieldset>
+    <legend>Feeds the contextual-risk layer, same as the PS asks for</legend>
+    <div class="row">
+      <label style="margin:0"><input type="checkbox" id="callerKnown" checked> Caller ID recognized</label>
+      <label style="margin:0"><input type="checkbox" id="offHours"> Off-hours call</label>
+    </div>
+    <label>Transcript / notes (optional keywords like "urgent transfer")</label>
+    <input type="text" id="transcript" placeholder="e.g. asked for an urgent wire transfer">
+  </fieldset>
+
+  <h2>3. Analyze the call</h2>
+  <div id="dropzone">Click to choose the call recording (.wav)</div>
+  <input type="file" id="fileInput" accept="audio/wav" style="display:none">
+  <button id="analyzeBtn" disabled>Analyze call</button>
+
+  <div id="gauge-bar"><div id="gauge-fill"></div></div>
+  <div id="level-label">Level: —</div>
+
+  <div class="breakdown">
+    <div class="signal">Acoustic<br><span class="val" id="v-acoustic">—</span></div>
+    <div class="signal">Speaker mismatch<br><span class="val" id="v-speaker">—</span></div>
+    <div class="signal">Context<br><span class="val" id="v-context">—</span></div>
+  </div>
+
+  <div id="alert-banner">⚠ Possible voice-cloning detected — recommend call-back verification before proceeding.</div>
+
+  <div id="log"></div>
+
+<script>
+const API_BASE = 'http://localhost:8000';
+
+function wireDropzone(zoneEl, inputEl, onPick) {
+  zoneEl.onclick = () => inputEl.click();
+  inputEl.onchange = (e) => e.target.files[0] && onPick(e.target.files[0]);
+  ['dragover','dragleave','drop'].forEach(evt => {
+    zoneEl.addEventListener(evt, (e) => {
+      e.preventDefault();
+      if (evt === 'drop' && e.dataTransfer.files.length) onPick(e.dataTransfer.files[0]);
+    });
+  });
+}
+
+let refFile = null, callFile = null;
+wireDropzone(document.getElementById('refdrop'), document.getElementById('refInput'), (f) => {
+  refFile = f;
+  document.getElementById('refdrop').textContent = `Selected: ${f.name}`;
+  document.getElementById('enrollBtn').disabled = !document.getElementById('enrollId').value;
+});
+document.getElementById('enrollId').oninput = (e) => {
+  document.getElementById('enrollBtn').disabled = !(refFile && e.target.value);
+};
+wireDropzone(document.getElementById('dropzone'), document.getElementById('fileInput'), (f) => {
+  callFile = f;
+  document.getElementById('dropzone').textContent = `Selected: ${f.name}`;
+  document.getElementById('analyzeBtn').disabled = false;
+});
+
+document.getElementById('enrollBtn').onclick = async () => {
+  const form = new FormData();
+  form.append('speaker_id', document.getElementById('enrollId').value);
+  form.append('file', refFile);
+  const status = document.getElementById('enrollStatus');
+  status.textContent = 'Enrolling…';
+  try {
+    const res = await fetch(`${API_BASE}/enroll`, { method: 'POST', body: form });
+    const data = await res.json();
+    status.textContent = `Enrolled voiceprint for "${data.speaker_id}".`;
+  } catch (err) {
+    status.textContent = 'Error contacting API — is the server running on :8000?';
+  }
+};
+
+const gaugeFill = document.getElementById('gauge-fill');
+const levelLabel = document.getElementById('level-label');
+const alertBanner = document.getElementById('alert-banner');
+const log = document.getElementById('log');
+
+function levelColor(level) {
+  return { LOW: '#22c55e', MEDIUM: '#eab308', HIGH: '#f97316', CRITICAL: '#ef4444' }[level] || '#22c55e';
+}
+
+document.getElementById('analyzeBtn').onclick = async () => {
+  const btn = document.getElementById('analyzeBtn');
+  btn.disabled = true;
+  log.textContent = 'Analyzing…';
+  alertBanner.style.display = 'none';
+
+  const form = new FormData();
+  form.append('file', callFile);
+  const speakerId = document.getElementById('enrollId').value;
+  if (speakerId) form.append('speaker_id', speakerId);
+  form.append('caller_known', document.getElementById('callerKnown').checked);
+  form.append('off_hours', document.getElementById('offHours').checked);
+  form.append('transcript', document.getElementById('transcript').value);
+
+  try {
+    const res = await fetch(`${API_BASE}/analyze`, { method: 'POST', body: form });
+    const data = await res.json();
+    log.textContent = `Backend: ${data.backend}\n`;
+    if (data.context_reasons.length) log.textContent += `Context flags: ${data.context_reasons.join('; ')}\n\n`;
+    replay(data.timeline, data.recommendation);
+  } catch (err) {
+    log.textContent = 'Error contacting API — is `uvicorn src.api:app --reload` running on :8000?\n' + err;
+    btn.disabled = false;
+  }
+};
+
+function replay(timeline, recommendation) {
+  let i = 0;
+  function step() {
+    if (i >= timeline.length) {
+      log.textContent += `\n${recommendation}`;
+      document.getElementById('analyzeBtn').disabled = false;
+      return;
+    }
+    const t = timeline[i];
+    gaugeFill.style.width = `${Math.round(t.risk_score * 100)}%`;
+    gaugeFill.style.background = levelColor(t.level);
+    levelLabel.textContent = `Level: ${t.level}  (t=${t.start_time}s, risk=${t.risk_score})`;
+    document.getElementById('v-acoustic').textContent = t.acoustic_score;
+    document.getElementById('v-speaker').textContent = t.speaker_mismatch;
+    document.getElementById('v-context').textContent = t.context_score;
+    if (t.alert) alertBanner.style.display = 'block';
+    log.textContent += `t=${t.start_time}s  risk=${t.risk_score}  ${t.level}  (dominant: ${t.dominant_signal})${t.alert ? '  <-- ALERT' : ''}\n`;
+    i++;
+    setTimeout(step, Math.max(300, t.duration * 300));
+  }
+  step();
+}
+</script>
+</body>
+</html>

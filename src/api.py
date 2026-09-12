@@ -1,0 +1,249 @@
+"""
+api.py — HTTP layer.
+
+Run with:
+    uvicorn src.api:app --reload --port 8000
+
+Then open web/index.html in a browser (it calls http://localhost:8000).
+
+POST /enroll
+    multipart/form-data: speaker_id (str) + file (a clean reference
+    .wav of that person's voice, 10-20 seconds). Builds the voiceprint
+    used later for cross-checking.
+
+POST /analyze
+    multipart/form-data: file (the call recording) + optional
+    speaker_id, caller_known, off_hours, first_contact, transcript.
+    Returns a per-chunk timeline where each entry is a FUSED score
+    (acoustic + speaker-consistency + context), plus the call verdict.
+    Any triggered alert is appended to the tamper-evident audit log.
+
+GET /audit/verify
+    Confirms the audit log's hash chain has not been tampered with —
+    a live demo of the "Blockchain & Cybersecurity" compliance angle.
+
+GET /health
+    Backend in use, plus the fusion/threshold invariant check, so a
+    misconfiguration is visible before a demo rather than during one.
+
+Uploads are streamed to a temp file with a hard size cap rather than
+being read into memory whole, so a large or hostile upload cannot
+exhaust RAM.
+"""
+
+import os
+import tempfile
+
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+
+from .audio_pipeline import chunk_audio, load_mono
+from .risk_engine import RiskEngine, ALERT_THRESHOLD
+from .detector import get_detector
+from .speaker_consistency import VoiceprintStore
+from .context_engine import score_context
+from .fusion import fuse, check_alertable
+from .audit_log import AuditLog
+
+# Upload caps. 16 kHz mono 16-bit PCM is ~32 KB/s, so 50 MB is roughly
+# 26 minutes of call audio — generous for a real call, bounded enough
+# that a hostile upload cannot fill the disk or exhaust memory.
+MAX_ANALYZE_BYTES = 50 * 1024 * 1024
+MAX_ENROLL_BYTES = 25 * 1024 * 1024
+_READ_CHUNK = 1024 * 1024
+
+# Only extensions we can actually decode. Also stops a crafted filename
+# from steering the temp-file suffix somewhere unexpected.
+ALLOWED_SUFFIXES = {".wav", ".wave", ".flac", ".ogg", ".aiff", ".aif"}
+
+app = FastAPI(title="SIH26104 Voice-Clone Detector")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],   # demo only — lock this down for real deployment
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+_detector = get_detector()          # loaded once at startup
+_voiceprints = VoiceprintStore()    # path anchored to project root
+_audit = AuditLog()                 # path anchored to project root
+
+
+def _safe_suffix(filename: str) -> str:
+    suffix = os.path.splitext(filename or "")[1].lower()
+    if suffix not in ALLOWED_SUFFIXES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported audio format '{suffix or 'unknown'}'. "
+                   f"Supported: {', '.join(sorted(ALLOWED_SUFFIXES))}.",
+        )
+    return suffix
+
+
+async def _save_upload(file: UploadFile, max_bytes: int) -> str:
+    """Streams an upload to a temp file, aborting past max_bytes.
+    Returns the temp path; the caller is responsible for deleting it."""
+    suffix = _safe_suffix(file.filename)
+    size = 0
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    try:
+        while True:
+            block = await file.read(_READ_CHUNK)
+            if not block:
+                break
+            size += len(block)
+            if size > max_bytes:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"File too large — limit is {max_bytes // (1024 * 1024)} MB.",
+                )
+            tmp.write(block)
+    except BaseException:
+        tmp.close()
+        os.remove(tmp.name)
+        raise
+    tmp.close()
+    if size == 0:
+        os.remove(tmp.name)
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+    return tmp.name
+
+
+def _load_or_400(path: str):
+    try:
+        return load_mono(path)
+    except Exception as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Could not decode that audio file — is it a valid .wav? ({e})",
+        )
+
+
+@app.get("/health")
+def health():
+    return {
+        "status": "ok",
+        "backend": _detector.name,
+        "alert_threshold": ALERT_THRESHOLD,
+        "fusion_check": check_alertable(ALERT_THRESHOLD),
+    }
+
+
+@app.post("/enroll")
+async def enroll(speaker_id: str = Form(...), file: UploadFile = File(...)):
+    speaker_id = speaker_id.strip()
+    if not speaker_id:
+        raise HTTPException(status_code=400, detail="speaker_id must not be empty.")
+
+    tmp_path = await _save_upload(file, MAX_ENROLL_BYTES)
+    try:
+        wav, sr = _load_or_400(tmp_path)
+        try:
+            _voiceprints.enroll(speaker_id, wav, sr)
+        except ValueError as e:
+            # Too little speech to build a usable voiceprint.
+            raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        os.remove(tmp_path)
+    return {
+        "status": "enrolled",
+        "speaker_id": speaker_id,
+        "duration_seconds": round(len(wav) / sr, 2),
+    }
+
+
+@app.post("/analyze")
+async def analyze(
+    file: UploadFile = File(...),
+    speaker_id: str = Form(None),
+    caller_known: bool = Form(True),
+    off_hours: bool = Form(False),
+    first_contact: bool = Form(False),
+    transcript: str = Form(""),
+):
+    speaker_id = (speaker_id or "").strip() or None
+    tmp_path = await _save_upload(file, MAX_ANALYZE_BYTES)
+
+    try:
+        ctx = score_context(
+            caller_known=caller_known,
+            off_hours=off_hours,
+            first_contact=first_contact,
+            transcript=transcript,
+        )
+
+        # Surfaced to the UI so a judge can tell "matches the enrolled
+        # voice" apart from "we had nothing to compare against" — those
+        # both score 0.0 mismatch but mean very different things.
+        speaker_enrolled = bool(speaker_id and _voiceprints.has(speaker_id))
+
+        engine = RiskEngine()
+        timeline = []
+        for chunk in chunk_audio(tmp_path, chunk_seconds=3.0):
+            acoustic = _detector.predict_detailed(chunk.waveform, chunk.sample_rate)
+            speaker_mismatch = (
+                _voiceprints.mismatch_score(speaker_id, chunk.waveform, chunk.sample_rate)
+                if speaker_enrolled else 0.0
+            )
+            fused = fuse(acoustic["spoof_prob"], speaker_mismatch, ctx["context_score"])
+            result = engine.update(fused["fused_score"])
+            timeline.append({
+                "start_time": round(chunk.start_time, 2),
+                "duration": round(chunk.duration, 2),
+                **result,
+                "acoustic_score": round(fused["acoustic_score"], 3),
+                "speaker_mismatch": round(fused["speaker_mismatch"], 3),
+                "context_score": round(fused["context_score"], 3),
+                "dominant_signal": fused["dominant_signal"],
+            })
+    finally:
+        os.remove(tmp_path)
+
+    if not timeline:
+        raise HTTPException(
+            status_code=400,
+            detail="That file contained no analysable audio (too short or silent).",
+        )
+
+    # Report the PEAK risk over the call, not the last chunk's EMA. A
+    # call cloned early and clean later is still a cloned call; the old
+    # behaviour could return alert_triggered=true alongside level=LOW.
+    verdict = engine.summary()
+
+    if verdict["alert_triggered"]:
+        # Log only the outcome + reasons, never raw audio — keeps the
+        # audit trail privacy-preserving while still being useful to a
+        # compliance reviewer.
+        _audit.append({
+            "speaker_id": speaker_id,
+            "peak_risk_score": verdict["peak_risk_score"],
+            "peak_level": verdict["peak_level"],
+            "score_at_alert": verdict["score_at_alert"],
+            "context_reasons": ctx["reasons"],
+        })
+
+    return {
+        "backend": _detector.name,
+        "speaker_id": speaker_id,
+        "speaker_enrolled": speaker_enrolled,
+        "context_reasons": ctx["reasons"],
+        "timeline": timeline,
+        "final_risk_score": verdict["peak_risk_score"],
+        "final_level": verdict["peak_level"],
+        "alert_triggered": verdict["alert_triggered"],
+        "score_at_alert": verdict["score_at_alert"],
+        "final_ema": verdict["final_ema"],
+        "recommendation": (
+            "Recommend secondary verification (call-back on a known number) "
+            "before proceeding with any sensitive action."
+            if verdict["alert_triggered"] else
+            "No strong impersonation signal detected in this call."
+        ),
+        "audit_logged": verdict["alert_triggered"],
+    }
+
+
+@app.get("/audit/verify")
+def audit_verify():
+    return _audit.verify_chain()
