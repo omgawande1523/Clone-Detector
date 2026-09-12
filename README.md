@@ -74,6 +74,25 @@ files or downloads):
 python demo/demo_cli.py
 ```
 
+## Tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest -q
+```
+
+83 tests. The suite is built around the bugs that actually shipped, so
+each of these would fail if the bug came back:
+
+| test file | pins |
+|---|---|
+| `test_speaker_consistency.py` | a different speaker must score a high mismatch (this was 0.002) |
+| `test_fusion.py` | acoustic alone and speaker alone must each be able to alert; context alone must not |
+| `test_audit_log.py` | backdating a record must break the chain; blank lines must not crash verification |
+| `test_detector_calibration.py` | real speech must not be flagged; over-smoothed synthetic must be |
+| `test_context_and_risk.py` | word-boundary keyword matching; peak risk reported, not the trailing EMA |
+| `test_api.py` | error paths return 4xx with a readable message, never a 500 |
+
 ## The three signals, in more detail
 
 **Acoustic/prosody (`detector.py`)** — pitch micro-jitter, spectral
@@ -81,18 +100,29 @@ flatness, energy-envelope smoothness by default (zero downloads); or
 swap in a real pretrained wav2vec2 spoof classifier once you have
 internet (see below). This is "does this sound synthetic."
 
-**Speaker consistency (`speaker_consistency.py`)** — a lightweight
-MFCC-style voiceprint compared via cosine similarity against an
-enrolled reference sample of the specific person being protected
-(e.g. a company's CEO, or a bank's known customer). This directly
-implements the PS's "cross-session consistency checks... against
-historical genuine samples" requirement, and it's the layer that
-catches a clone good enough to fool a generic spoof detector but that
-still doesn't match *this particular* person's voice. Honest
-limitation: this MVP voiceprint captures spectral timbre, not pitch,
-so it can under-discriminate two synthetic voices with similar timbre
-but different pitch — the documented upgrade is a real speaker
-embedding model (ECAPA-TDNN via speechbrain, or resemblyzer).
+**Speaker consistency (`speaker_consistency.py`)** — a 256-dim
+Resemblyzer speaker embedding (GE2E d-vector) compared by cosine
+similarity against an enrolled reference sample of the specific person
+being protected (e.g. a company's CEO, or a bank's known customer).
+This directly implements the PS's "cross-session consistency
+checks... against historical genuine samples" requirement, and it's
+the layer that catches a clone good enough to fool a generic spoof
+detector but that still doesn't match *this particular* person's
+voice.
+
+Measured separation on two distinct speakers: same speaker scores a
+cosine of 0.97 (mismatch 0.00), a different speaker 0.54 (mismatch
+1.00). The raw cosine is remapped onto a [0,1] risk score against a
+measured decision band rather than used directly — see the
+calibration constants in that module.
+
+This replaced an MFCC-style voiceprint that did not work: log-band-
+energy vectors are all the same sign, so their cosine similarity was
+pinned near 1.0 for any two speech signals. A genuinely different
+speaker scored a mismatch of 0.002 while the *same* speaker with
+flattened pitch scored 0.632 — it was measuring synthesis artifacts,
+not identity, which also meant it was not independent of the acoustic
+detector at all.
 
 **Call context (`context_engine.py`)** — implements the PS's
 "contextual enrichment using metadata such as call origin, known
@@ -102,16 +132,28 @@ risk-keyword detection in a transcript, combined transparently (not a
 black box) so a compliance reviewer can see exactly why a call was
 flagged.
 
-**Fusion (`fusion.py`)** — weighted combination of the three, with the
-dominant contributing signal surfaced for an explainable alert message.
-Swap the fixed weights for a trained logistic-regression meta-model
-once you have labeled call outcomes.
+**Fusion (`fusion.py`)** — weighted combination of the three
+(acoustic 0.45 / speaker 0.45 / context 0.10), with the dominant
+contributing signal surfaced for an explainable alert message. Swap
+the fixed weights for a trained logistic-regression meta-model once
+you have labeled call outcomes.
+
+The weights obey a rule the tests enforce: acoustic alone and speaker
+mismatch alone must each be able to cross the alert threshold on
+their own merits, and context alone must never be able to — a call
+with suspicious metadata is not evidence that anyone's voice was
+cloned. An earlier version had weights of 0.55/0.30/0.15 against a
+threshold of 0.60, which made it arithmetically impossible for ANY
+single signal to raise an alert.
 
 ## The audit trail — why "blockchain" isn't just a buzzword here
 
 `audit_log.py` implements a local hash chain: every alert record embeds
 the hash of the previous record, so any retroactive edit or deletion
 breaks the chain and is instantly detectable via `GET /audit/verify`.
+The hash covers the timestamp as well as the payload, so *backdating*
+an alert — moving it to after a transfer was approved, say — breaks
+the chain too. That is exactly the edit such a log exists to catch.
 This is a genuine, honest prototype of the "Blockchain & Cybersecurity"
 theme tag — **be upfront that it is not yet a real distributed ledger**
 (no consensus, single machine). The production upgrade is periodically
@@ -182,8 +224,12 @@ still being useful for compliance.
 
 - Heuristic acoustic backend is a signal-processing baseline, not a
   trained classifier — good for demos, not a claimed production accuracy.
-- The MVP speaker-consistency voiceprint can under-discriminate voices
-  with similar timbre but different pitch — documented upgrade path above.
+  Its thresholds are calibrated against 6.4 minutes of one real speaker
+  (no false positives across 128 windows) and against over-smoothed
+  synthetic speech, which it still flags. That establishes "doesn't cry
+  wolf on real callers"; it does NOT establish accuracy against modern
+  neural voice clones. Do not quote an accuracy number off this backend
+  — use the transformer backend and a real dataset for that.
 - Transformer backend's out-of-the-box accuracy is strongest on
   English/Western voices; Indian-accent robustness needs fine-tuning
   data you don't yet have.

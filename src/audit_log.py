@@ -79,7 +79,14 @@ class AuditLog:
 
         Blank/whitespace-only lines are skipped: a trailing newline is
         a normal property of a text log, not evidence of tampering.
+
+        A missing file reads as an empty chain rather than raising. The
+        file is created in __init__, but it can be deleted, rotated or
+        made briefly unavailable afterwards, and every alert would then
+        fail with a 500 instead of being recorded.
         """
+        if not os.path.exists(self.path):
+            return
         with open(self.path) as f:
             index = 0
             for line in f:

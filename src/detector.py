@@ -67,6 +67,53 @@ class HeuristicDetector:
         arith_mean = np.mean(spectrum)
         return float(geo_mean / arith_mean)
 
+    # ---- calibration constants -------------------------------------
+    #
+    # These were previously chosen against the synthetic sine-wave
+    # signals in demo_cli.py, and were roughly an order of magnitude
+    # away from what real speech measures. Measured over 128 chunks of
+    # a 6.4-minute real 16 kHz recording, every sub-score came out at
+    # exactly 0.000 for every chunk — the detector was inert on real
+    # audio, not merely weak:
+    #
+    #     measurement        real speech (p10/median/p90)   old threshold
+    #     f0 jitter          0.063 / 0.151 / 0.260          < 0.010
+    #     spectral flatness  0.036 / 0.091 / 0.165          < 0.050
+    #     envelope variance  0.0092 / 0.0185 / 0.0400       < 0.0020
+    #
+    # The constants below are anchored on that measured distribution:
+    # each fires only once a measurement leaves the range real speech
+    # actually occupies. See tests/test_detector_calibration.py.
+    #
+    # HONEST SCOPE: calibrated against one real speaker for the
+    # genuine side, and Windows SAPI TTS for the synthetic side. That
+    # establishes "does not false-positive on real speech" and "still
+    # catches over-smoothed vocoder output". It does NOT establish
+    # accuracy against modern neural voice clones — that needs
+    # ASVspoof 2019/2021 LA or In-the-Wild data, or the transformer
+    # backend. Do not quote an accuracy number off this baseline.
+
+    # Real speech sits at p10=0.063 and up. Below 0.060 is flatter
+    # pitch than a human sustains; 0.020 is vocoder-flat.
+    JITTER_SUSPICIOUS = 0.060
+    JITTER_SATURATED = 0.020
+
+    # Two-sided, because the measurement contradicted the assumption
+    # the old code encoded. Real speech occupies 0.017-0.220
+    # (p01-p99). Classic vocoder output sits BELOW that (too tonal),
+    # but the TTS measured here sat well ABOVE it (median 0.396,
+    # i.e. 4x more spectrally flat than real speech, not less). So
+    # this scores "outside the range real speech occupies", in either
+    # direction, rather than assuming a direction.
+    FLATNESS_TONAL = 0.020          # below this: unnaturally tonal
+    FLATNESS_TONAL_SAT = 0.005
+    FLATNESS_NOISY = 0.250          # above this: unnaturally noise-like
+    FLATNESS_NOISY_SAT = 0.350
+
+    # Real speech sits at p10=0.0092 and up.
+    ENV_VAR_SUSPICIOUS = 0.008
+    ENV_VAR_SATURATED = 0.002
+
     def predict_detailed(self, wav: np.ndarray, sr: int) -> dict:
         """Returns the combined spoof_prob PLUS each sub-score, so the
         fusion engine (and the demo dashboard) can show *why* a chunk
@@ -87,14 +134,20 @@ class HeuristicDetector:
             # Suspiciously flat pitch -> higher spoof probability.
             diffs = np.abs(np.diff(voiced))
             jitter = np.mean(diffs) / (np.mean(voiced) + 1e-6)
-            # jitter ~0.01-0.05 is typical natural speech; below ~0.004
-            # is suspiciously robotic-smooth.
-            jitter_score = float(np.clip((0.01 - jitter) / 0.01, 0, 1))
+            jitter_score = float(np.clip(
+                (self.JITTER_SUSPICIOUS - jitter)
+                / (self.JITTER_SUSPICIOUS - self.JITTER_SATURATED), 0, 1))
 
+        # Spectral flatness outside the band real speech occupies, in
+        # either direction (see FLATNESS_* above).
         flatness = self._spectral_flatness(wav)
-        # Very low flatness (too tonal/clean) nudges spoof score up;
-        # this is a weak signal on its own, weighted lightly.
-        flatness_score = float(np.clip((0.05 - flatness) / 0.05, 0, 1))
+        too_tonal = np.clip(
+            (self.FLATNESS_TONAL - flatness)
+            / (self.FLATNESS_TONAL - self.FLATNESS_TONAL_SAT), 0, 1)
+        too_noisy = np.clip(
+            (flatness - self.FLATNESS_NOISY)
+            / (self.FLATNESS_NOISY_SAT - self.FLATNESS_NOISY), 0, 1)
+        flatness_score = float(max(too_tonal, too_noisy))
 
         # Energy-envelope smoothness: natural speech has micro-variation
         # in short-time energy; some vocoders over-smooth it.
@@ -106,7 +159,9 @@ class HeuristicDetector:
             ])
             env = env / (np.max(env) + 1e-9)
             env_var = float(np.var(np.diff(env)))
-            smoothness_score = float(np.clip((0.002 - env_var) / 0.002, 0, 1))
+            smoothness_score = float(np.clip(
+                (self.ENV_VAR_SUSPICIOUS - env_var)
+                / (self.ENV_VAR_SUSPICIOUS - self.ENV_VAR_SATURATED), 0, 1))
         else:
             smoothness_score = 0.0
 

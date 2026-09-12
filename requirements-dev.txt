@@ -1,0 +1,4 @@
+# Test suite
+-r requirements.txt
+pytest
+httpx

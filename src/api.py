@@ -180,7 +180,19 @@ async def analyze(
 
         engine = RiskEngine()
         timeline = []
-        for chunk in chunk_audio(tmp_path, chunk_seconds=3.0):
+        # chunk_audio() decodes lazily, so a corrupt file raises on the
+        # first iteration of this loop rather than at _save_upload time.
+        # Without this guard that surfaces as an HTTP 500 instead of a
+        # "that file isn't valid audio" message.
+        try:
+            chunks = list(chunk_audio(tmp_path, chunk_seconds=3.0))
+        except Exception as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Could not decode that audio file — is it a valid .wav? ({e})",
+            )
+
+        for chunk in chunks:
             acoustic = _detector.predict_detailed(chunk.waveform, chunk.sample_rate)
             speaker_mismatch = (
                 _voiceprints.mismatch_score(speaker_id, chunk.waveform, chunk.sample_rate)

@@ -2,176 +2,520 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>SIH26104 — Voice Authenticity Monitor (Demo)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Voice Authenticity Monitor — SIH26104</title>
 <style>
-  body { font-family: -apple-system, Segoe UI, sans-serif; max-width: 720px; margin: 40px auto; color: #1a1a1a; }
-  h1 { font-size: 20px; }
-  h2 { font-size: 15px; margin-top: 28px; }
-  .sub { color: #666; margin-bottom: 20px; }
-  fieldset { border: 1px solid #e5e7eb; border-radius: 8px; padding: 14px 16px; margin-top: 8px; }
-  legend { font-size: 13px; color: #555; padding: 0 6px; }
-  label { display: block; font-size: 13px; margin: 8px 0 4px; }
-  input[type=text] { width: 100%; padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 6px; box-sizing: border-box; }
-  .row { display: flex; gap: 20px; align-items: center; }
-  #dropzone, #refdrop { border: 2px dashed #aaa; border-radius: 10px; padding: 20px; text-align: center; cursor: pointer; font-size: 14px; }
-  #gauge-bar { height: 28px; border-radius: 14px; background: #e5e7eb; overflow: hidden; margin-top: 20px; }
-  #gauge-fill { height: 100%; width: 0%; background: #22c55e; transition: width 0.4s, background 0.4s; }
-  #level-label { font-weight: 600; margin-top: 8px; }
-  .breakdown { display: flex; gap: 12px; margin-top: 10px; }
-  .signal { flex: 1; background: #f9fafb; border-radius: 8px; padding: 8px 10px; font-size: 12px; }
-  .signal .val { font-size: 16px; font-weight: 600; }
-  #alert-banner { display:none; margin-top: 16px; padding: 12px 16px; border-radius: 8px; background: #fee2e2; color: #991b1b; font-weight: 600; }
-  #log { margin-top: 20px; font-family: monospace; font-size: 12px; color: #444; white-space: pre-line; }
-  button { margin-top: 12px; padding: 8px 16px; border-radius: 6px; border: none; background: #2563eb; color: white; cursor: pointer; }
-  button:disabled { background: #93c5fd; cursor: default; }
-  button.secondary { background: #6b7280; }
+  :root {
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --ink: #16181d;
+    --muted: #626875;
+    --line: #e3e6ec;
+    --accent: #2563eb;
+    --green: #16a34a;
+    --amber: #d97706;
+    --orange: #ea580c;
+    --red: #dc2626;
+    --green-bg: #ecfdf3;
+    --red-bg: #fef2f2;
+    --amber-bg: #fffbeb;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Segoe UI", Roboto, system-ui, sans-serif;
+    background: var(--bg); color: var(--ink);
+    margin: 0; padding: 32px 20px 64px; line-height: 1.5;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; }
+
+  header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; margin-bottom: 8px; }
+  h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
+  .tagline { color: var(--muted); font-size: 14px; margin: 4px 0 0; }
+  .pill { font-size: 12px; padding: 5px 11px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: var(--muted); white-space: nowrap; }
+  .pill.ok { color: var(--green); border-color: #bbf7d0; background: var(--green-bg); }
+  .pill.bad { color: var(--red); border-color: #fecaca; background: var(--red-bg); }
+
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; margin-top: 16px; }
+  .card h2 { font-size: 14px; margin: 0 0 4px; letter-spacing: 0.01em; }
+  .card .hint { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
+  .step { display: inline-flex; align-items: center; justify-content: center; width: 21px; height: 21px; border-radius: 999px; background: var(--accent); color: #fff; font-size: 12px; font-weight: 600; margin-right: 8px; }
+
+  label { display: block; font-size: 13px; font-weight: 500; margin: 10px 0 5px; }
+  input[type=text] { width: 100%; padding: 9px 11px; border: 1px solid #d4d8e0; border-radius: 8px; font-size: 14px; font-family: inherit; }
+  input[type=text]:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: var(--accent); }
+  .checks { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
+  .check { flex: 1 1 200px; display: flex; gap: 9px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px; cursor: pointer; font-size: 13px; font-weight: 500; }
+  .check:hover { border-color: #c3c9d4; }
+  .check input { margin: 2px 0 0; flex-shrink: 0; }
+  .check span small { display: block; color: var(--muted); font-weight: 400; font-size: 12px; }
+
+  .drop { border: 1.5px dashed #c3c9d4; border-radius: 10px; padding: 22px 16px; text-align: center; cursor: pointer; font-size: 14px; color: var(--muted); background: #fafbfc; }
+  .drop:hover, .drop.over { border-color: var(--accent); color: var(--accent); background: #f5f8ff; }
+  .drop.has-file { border-style: solid; border-color: #bbf7d0; background: var(--green-bg); color: #15803d; font-weight: 500; }
+
+  button { margin-top: 12px; padding: 10px 18px; border-radius: 8px; border: none; background: var(--accent); color: #fff; font-size: 14px; font-weight: 600; font-family: inherit; cursor: pointer; }
+  button:hover:not(:disabled) { background: #1d4ed8; }
+  button:disabled { background: #c7d2e5; cursor: not-allowed; }
+  button.ghost { background: transparent; color: var(--accent); border: 1px solid #c3d0ea; }
+  button.ghost:hover:not(:disabled) { background: #f5f8ff; }
+
+  .status { font-size: 13px; margin-top: 9px; min-height: 18px; }
+  .status.ok { color: var(--green); }
+  .status.err { color: var(--red); }
+  .status.busy { color: var(--muted); }
+
+  /* verdict */
+  #verdict { display: none; border-width: 2px; }
+  #verdict.show { display: block; }
+  #verdict.genuine { border-color: #a7f3c9; background: linear-gradient(#f7fefa, #fff); }
+  #verdict.alert { border-color: #fca5a5; background: linear-gradient(#fff6f6, #fff); }
+  .headline { font-size: 25px; font-weight: 700; letter-spacing: -0.02em; margin: 2px 0 6px; display: flex; align-items: center; gap: 11px; }
+  .headline .dot { width: 13px; height: 13px; border-radius: 999px; flex-shrink: 0; }
+  .levelline { font-size: 14px; color: var(--muted); margin-bottom: 16px; }
+  .levelline b { color: var(--ink); }
+  .badge { display: inline-block; padding: 2px 9px; border-radius: 6px; font-size: 12px; font-weight: 700; letter-spacing: 0.04em; vertical-align: 1px; }
+
+  .gauge { height: 10px; border-radius: 999px; background: #eceef2; overflow: hidden; position: relative; }
+  .gauge-fill { height: 100%; width: 0; border-radius: 999px; transition: width .45s ease, background .45s ease; }
+  .gauge-marks { position: relative; height: 15px; font-size: 10px; color: #9aa1af; margin-top: 3px; }
+  .gauge-marks span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+  .threshold { position: absolute; top: -13px; bottom: 0; width: 2px; background: #111827; opacity: .35; }
+
+  .signals { display: grid; grid-template-columns: repeat(auto-fit, minmax(215px, 1fr)); gap: 12px; margin-top: 20px; }
+  .sig { border: 1px solid var(--line); border-radius: 10px; padding: 13px 14px; background: #fff; }
+  .sig .name { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+  .sig .verdictline { font-size: 15px; font-weight: 650; margin: 7px 0 3px; }
+  .sig .plain { font-size: 12.5px; color: var(--muted); line-height: 1.45; }
+  .sig .bar { height: 5px; border-radius: 999px; background: #eceef2; margin-top: 10px; overflow: hidden; }
+  .sig .bar i { display: block; height: 100%; border-radius: 999px; transition: width .4s; }
+  .sig.na { background: #fafbfc; }
+
+  .reasons { margin: 16px 0 0; padding: 12px 14px; background: var(--amber-bg); border: 1px solid #fde68a; border-radius: 9px; font-size: 13px; }
+  .reasons ul { margin: 6px 0 0; padding-left: 19px; }
+  .reasons li { margin: 2px 0; }
+  .rec { margin-top: 16px; padding: 13px 15px; border-radius: 9px; font-size: 13.5px; font-weight: 500; }
+  .rec.genuine { background: var(--green-bg); border: 1px solid #bbf7d0; color: #15803d; }
+  .rec.alert { background: var(--red-bg); border: 1px solid #fecaca; color: #b91c1c; }
+
+  details { margin-top: 16px; }
+  summary { cursor: pointer; font-size: 13px; color: var(--accent); font-weight: 500; }
+  .timeline { margin-top: 10px; font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 11.5px; color: #4b5160; background: #fafbfc; border: 1px solid var(--line); border-radius: 8px; padding: 11px 13px; max-height: 230px; overflow: auto; white-space: pre; }
+
+  .audit-row { display: flex; align-items: center; gap: 13px; flex-wrap: wrap; }
+  #auditState { font-size: 14px; font-weight: 600; }
+  #auditDetail { font-size: 12.5px; color: var(--muted); margin-top: 7px; }
+  .banner { display: none; margin-top: 16px; padding: 12px 15px; border-radius: 9px; font-size: 13.5px; background: var(--red-bg); border: 1px solid #fecaca; color: #b91c1c; }
+  .banner.show { display: block; }
+  .banner b { display: block; margin-bottom: 3px; }
+  .footnote { color: var(--muted); font-size: 12px; margin-top: 22px; text-align: center; }
 </style>
 </head>
 <body>
-  <h1>Voice authenticity monitor</h1>
-  <div class="sub">SIH26104 demo — fuses acoustic, speaker-consistency, and call-context signals into one live risk score.</div>
+<div class="wrap">
 
-  <h2>1. Enroll a reference voice (optional)</h2>
-  <fieldset>
-    <legend>Cross-checks the call against this person's known voice</legend>
-    <label>Speaker ID</label>
-    <input type="text" id="enrollId" placeholder="e.g. ceo, cust_00123">
-    <div id="refdrop" style="margin-top:8px">Click to choose a reference .wav (10-20s of clean speech)</div>
-    <input type="file" id="refInput" accept="audio/wav" style="display:none">
-    <button id="enrollBtn" class="secondary" disabled>Enroll voiceprint</button>
-    <div id="enrollStatus" style="font-size:12px;color:#666;margin-top:6px"></div>
-  </fieldset>
-
-  <h2>2. Call context (optional)</h2>
-  <fieldset>
-    <legend>Feeds the contextual-risk layer, same as the PS asks for</legend>
-    <div class="row">
-      <label style="margin:0"><input type="checkbox" id="callerKnown" checked> Caller ID recognized</label>
-      <label style="margin:0"><input type="checkbox" id="offHours"> Off-hours call</label>
+  <header>
+    <div>
+      <h1>Voice authenticity monitor</h1>
+      <p class="tagline">Flags AI-cloned voices mid-call by fusing three independent checks — before money moves.</p>
     </div>
-    <label>Transcript / notes (optional keywords like "urgent transfer")</label>
-    <input type="text" id="transcript" placeholder="e.g. asked for an urgent wire transfer">
-  </fieldset>
+    <div id="serverPill" class="pill">checking server…</div>
+  </header>
 
-  <h2>3. Analyze the call</h2>
-  <div id="dropzone">Click to choose the call recording (.wav)</div>
-  <input type="file" id="fileInput" accept="audio/wav" style="display:none">
-  <button id="analyzeBtn" disabled>Analyze call</button>
-
-  <div id="gauge-bar"><div id="gauge-fill"></div></div>
-  <div id="level-label">Level: —</div>
-
-  <div class="breakdown">
-    <div class="signal">Acoustic<br><span class="val" id="v-acoustic">—</span></div>
-    <div class="signal">Speaker mismatch<br><span class="val" id="v-speaker">—</span></div>
-    <div class="signal">Context<br><span class="val" id="v-context">—</span></div>
+  <div id="serverDown" class="banner">
+    <b>Can't reach the analysis server.</b>
+    Start it with <code>uvicorn src.api:app --reload --port 8000</code> from the project folder, then reload this page.
   </div>
 
-  <div id="alert-banner">⚠ Possible voice-cloning detected — recommend call-back verification before proceeding.</div>
+  <!-- STEP 1 -->
+  <div class="card">
+    <h2><span class="step">1</span>Enrol a reference voice <span style="font-weight:400;color:var(--muted)">(optional)</span></h2>
+    <p class="hint">Gives the system a known-good voiceprint of the person being protected — the CEO, or a specific customer — so it can tell "not this person" apart from "sounds synthetic".</p>
 
-  <div id="log"></div>
+    <label for="enrollId">Who is this? (speaker ID)</label>
+    <input type="text" id="enrollId" placeholder="e.g. ceo, cust_00123" autocomplete="off">
+
+    <label>Reference recording</label>
+    <div id="refdrop" class="drop">Click or drop a clean .wav — 10–20 seconds of this person speaking</div>
+    <input type="file" id="refInput" accept=".wav,.flac,.ogg,audio/*" hidden>
+
+    <button id="enrollBtn" class="ghost" disabled>Enrol voiceprint</button>
+    <div id="enrollStatus" class="status"></div>
+  </div>
+
+  <!-- STEP 2 -->
+  <div class="card">
+    <h2><span class="step">2</span>Call context <span style="font-weight:400;color:var(--muted)">(optional)</span></h2>
+    <p class="hint">Metadata a contact centre already has. It sharpens a verdict but can never raise an alert on its own — a suspicious-looking call is not evidence that a voice was cloned.</p>
+
+    <div class="checks">
+      <label class="check"><input type="checkbox" id="callerKnown" checked><span>Caller ID recognised<small>Number is in the known-contacts list</small></span></label>
+      <label class="check"><input type="checkbox" id="offHours"><span>Off-hours call<small>Outside normal business hours</small></span></label>
+      <label class="check"><input type="checkbox" id="firstContact"><span>First contact<small>First recorded call from this number</small></span></label>
+    </div>
+
+    <label for="transcript">Transcript or notes</label>
+    <input type="text" id="transcript" placeholder='e.g. "asked for an urgent wire transfer and the OTP"' autocomplete="off">
+  </div>
+
+  <!-- STEP 3 -->
+  <div class="card">
+    <h2><span class="step">3</span>Analyse the call</h2>
+    <p class="hint">Upload the call recording. It is split into 3-second windows and scored as if streaming live.</p>
+    <div id="dropzone" class="drop">Click or drop the call recording (.wav)</div>
+    <input type="file" id="fileInput" accept=".wav,.flac,.ogg,audio/*" hidden>
+    <button id="analyzeBtn" disabled>Analyse call</button>
+    <div id="analyzeStatus" class="status"></div>
+  </div>
+
+  <!-- VERDICT -->
+  <div id="verdict" class="card">
+    <div class="headline"><span class="dot"></span><span id="headlineText"></span></div>
+    <div class="levelline">Risk level <span id="levelBadge" class="badge"></span> <span id="scoreText"></span></div>
+
+    <div class="gauge"><div id="gaugeFill" class="gauge-fill"></div></div>
+    <div class="gauge-marks">
+      <span style="left:0">0</span>
+      <span style="left:20%">0.20</span>
+      <span style="left:40%">0.40 alert<i class="threshold" style="left:50%"></i></span>
+      <span style="left:60%">0.60</span>
+      <span style="left:100%">1.0</span>
+    </div>
+
+    <div class="signals">
+      <div class="sig" id="sigAcoustic">
+        <div class="name">Acoustic analysis</div>
+        <div class="verdictline"></div>
+        <div class="plain">Does the audio itself carry the artefacts that text-to-speech and voice cloners leave behind — unnaturally steady pitch, over-smoothed loudness, odd spectral texture?</div>
+        <div class="bar"><i></i></div>
+      </div>
+      <div class="sig" id="sigSpeaker">
+        <div class="name">Speaker match</div>
+        <div class="verdictline"></div>
+        <div class="plain">Does this voice actually belong to the person it claims to be, compared against their enrolled voiceprint?</div>
+        <div class="bar"><i></i></div>
+      </div>
+      <div class="sig" id="sigContext">
+        <div class="name">Call context</div>
+        <div class="verdictline"></div>
+        <div class="plain">Do the call's metadata and wording match known social-engineering patterns — unknown number, odd hours, urgent money or OTP requests?</div>
+        <div class="bar"><i></i></div>
+      </div>
+    </div>
+
+    <div id="reasons" class="reasons" style="display:none"><b>Context flags raised</b><ul></ul></div>
+    <div id="rec" class="rec"></div>
+
+    <details>
+      <summary>Per-window detail (what the live gauge saw, second by second)</summary>
+      <div id="timeline" class="timeline"></div>
+    </details>
+  </div>
+
+  <!-- AUDIT -->
+  <div class="card">
+    <h2>Audit trail</h2>
+    <p class="hint">Every alert is written to a hash chain — each record seals the one before it. Editing, deleting, reordering or backdating any record breaks the chain and shows up here. Raw audio is never stored, only outcomes.</p>
+    <div class="audit-row">
+      <button id="auditBtn" class="ghost">Verify audit trail</button>
+      <span id="auditState" style="color:var(--muted)">not checked yet</span>
+    </div>
+    <div id="auditDetail"></div>
+  </div>
+
+  <p class="footnote">SIH26104 · prototype. Heuristic acoustic baseline — not a certified accuracy claim.</p>
+</div>
 
 <script>
-const API_BASE = 'http://localhost:8000';
+const API = 'http://localhost:8000';
+const $ = id => document.getElementById(id);
 
-function wireDropzone(zoneEl, inputEl, onPick) {
-  zoneEl.onclick = () => inputEl.click();
-  inputEl.onchange = (e) => e.target.files[0] && onPick(e.target.files[0]);
-  ['dragover','dragleave','drop'].forEach(evt => {
-    zoneEl.addEventListener(evt, (e) => {
-      e.preventDefault();
-      if (evt === 'drop' && e.dataTransfer.files.length) onPick(e.dataTransfer.files[0]);
-    });
+const LEVEL_COLOR = { LOW: 'var(--green)', MEDIUM: 'var(--amber)', HIGH: 'var(--orange)', CRITICAL: 'var(--red)' };
+const LEVEL_BG = { LOW: '#dcfce7', MEDIUM: '#fef3c7', HIGH: '#ffedd5', CRITICAL: '#fee2e2' };
+
+let refFile = null, callFile = null, serverUp = false;
+
+/* ---------- server health ---------- */
+async function checkHealth() {
+  try {
+    const res = await fetch(`${API}/health`);
+    if (!res.ok) throw new Error(res.status);
+    const d = await res.json();
+    serverUp = true;
+    $('serverPill').className = 'pill ok';
+    $('serverPill').textContent = `server online · ${d.backend}`;
+    $('serverDown').classList.remove('show');
+  } catch {
+    serverUp = false;
+    $('serverPill').className = 'pill bad';
+    $('serverPill').textContent = 'server offline';
+    $('serverDown').classList.add('show');
+  }
+  syncButtons();
+}
+
+/* ---------- file pickers ---------- */
+function wireDrop(zone, input, onPick) {
+  zone.onclick = () => input.click();
+  input.onchange = e => e.target.files[0] && onPick(e.target.files[0]);
+  ['dragenter', 'dragover'].forEach(ev => zone.addEventListener(ev, e => {
+    e.preventDefault(); zone.classList.add('over');
+  }));
+  ['dragleave', 'drop'].forEach(ev => zone.addEventListener(ev, e => {
+    e.preventDefault(); zone.classList.remove('over');
+  }));
+  zone.addEventListener('drop', e => {
+    if (e.dataTransfer.files.length) onPick(e.dataTransfer.files[0]);
   });
 }
 
-let refFile = null, callFile = null;
-wireDropzone(document.getElementById('refdrop'), document.getElementById('refInput'), (f) => {
-  refFile = f;
-  document.getElementById('refdrop').textContent = `Selected: ${f.name}`;
-  document.getElementById('enrollBtn').disabled = !document.getElementById('enrollId').value;
-});
-document.getElementById('enrollId').oninput = (e) => {
-  document.getElementById('enrollBtn').disabled = !(refFile && e.target.value);
-};
-wireDropzone(document.getElementById('dropzone'), document.getElementById('fileInput'), (f) => {
-  callFile = f;
-  document.getElementById('dropzone').textContent = `Selected: ${f.name}`;
-  document.getElementById('analyzeBtn').disabled = false;
-});
+const AUDIO_RE = /\.(wav|wave|flac|ogg|aiff|aif)$/i;
 
-document.getElementById('enrollBtn').onclick = async () => {
-  const form = new FormData();
-  form.append('speaker_id', document.getElementById('enrollId').value);
-  form.append('file', refFile);
-  const status = document.getElementById('enrollStatus');
-  status.textContent = 'Enrolling…';
-  try {
-    const res = await fetch(`${API_BASE}/enroll`, { method: 'POST', body: form });
-    const data = await res.json();
-    status.textContent = `Enrolled voiceprint for "${data.speaker_id}".`;
-  } catch (err) {
-    status.textContent = 'Error contacting API — is the server running on :8000?';
+function validateAudio(file, statusEl) {
+  if (!AUDIO_RE.test(file.name)) {
+    setStatus(statusEl, `"${file.name}" isn't a supported audio file. Use .wav (or .flac/.ogg).`, 'err');
+    return false;
   }
-};
-
-const gaugeFill = document.getElementById('gauge-fill');
-const levelLabel = document.getElementById('level-label');
-const alertBanner = document.getElementById('alert-banner');
-const log = document.getElementById('log');
-
-function levelColor(level) {
-  return { LOW: '#22c55e', MEDIUM: '#eab308', HIGH: '#f97316', CRITICAL: '#ef4444' }[level] || '#22c55e';
+  if (file.size === 0) {
+    setStatus(statusEl, `"${file.name}" is empty.`, 'err');
+    return false;
+  }
+  if (file.size > 50 * 1024 * 1024) {
+    setStatus(statusEl, `"${file.name}" is ${(file.size / 1048576).toFixed(0)} MB — the limit is 50 MB.`, 'err');
+    return false;
+  }
+  return true;
 }
 
-document.getElementById('analyzeBtn').onclick = async () => {
-  const btn = document.getElementById('analyzeBtn');
-  btn.disabled = true;
-  log.textContent = 'Analyzing…';
-  alertBanner.style.display = 'none';
+function setStatus(el, msg, kind) {
+  el.textContent = msg;
+  el.className = 'status' + (kind ? ' ' + kind : '');
+}
+
+wireDrop($('refdrop'), $('refInput'), f => {
+  if (!validateAudio(f, $('enrollStatus'))) return;
+  refFile = f;
+  $('refdrop').textContent = `✓ ${f.name}`;
+  $('refdrop').classList.add('has-file');
+  setStatus($('enrollStatus'), '');
+  syncButtons();
+});
+
+wireDrop($('dropzone'), $('fileInput'), f => {
+  if (!validateAudio(f, $('analyzeStatus'))) return;
+  callFile = f;
+  $('dropzone').textContent = `✓ ${f.name}`;
+  $('dropzone').classList.add('has-file');
+  setStatus($('analyzeStatus'), '');
+  syncButtons();
+});
+
+$('enrollId').oninput = syncButtons;
+
+function syncButtons() {
+  $('enrollBtn').disabled = !(serverUp && refFile && $('enrollId').value.trim());
+  $('analyzeBtn').disabled = !(serverUp && callFile);
+}
+
+/* ---------- shared request helper ---------- */
+async function post(path, form, statusEl, busyMsg) {
+  setStatus(statusEl, busyMsg, 'busy');
+  let res;
+  try {
+    res = await fetch(`${API}${path}`, { method: 'POST', body: form });
+  } catch {
+    serverUp = false;
+    $('serverPill').className = 'pill bad';
+    $('serverPill').textContent = 'server offline';
+    $('serverDown').classList.add('show');
+    syncButtons();
+    throw new Error('Could not reach the server. Is uvicorn still running on port 8000?');
+  }
+  let data = null;
+  try { data = await res.json(); } catch { /* non-JSON error body */ }
+  if (!res.ok) {
+    throw new Error((data && data.detail) || `Server returned ${res.status}.`);
+  }
+  return data;
+}
+
+/* ---------- enrol ---------- */
+$('enrollBtn').onclick = async () => {
+  const btn = $('enrollBtn'); btn.disabled = true;
+  const form = new FormData();
+  form.append('speaker_id', $('enrollId').value.trim());
+  form.append('file', refFile);
+  try {
+    const d = await post('/enroll', form, $('enrollStatus'), 'Building voiceprint…');
+    setStatus($('enrollStatus'), `✓ Voiceprint stored for "${d.speaker_id}" (${d.duration_seconds}s of audio). Calls analysed with this speaker ID will now be checked against it.`, 'ok');
+  } catch (e) {
+    setStatus($('enrollStatus'), '✗ ' + e.message, 'err');
+  }
+  syncButtons();
+};
+
+/* ---------- analyse ---------- */
+$('analyzeBtn').onclick = async () => {
+  const btn = $('analyzeBtn'); btn.disabled = true;
+  $('verdict').classList.remove('show');
 
   const form = new FormData();
   form.append('file', callFile);
-  const speakerId = document.getElementById('enrollId').value;
-  if (speakerId) form.append('speaker_id', speakerId);
-  form.append('caller_known', document.getElementById('callerKnown').checked);
-  form.append('off_hours', document.getElementById('offHours').checked);
-  form.append('transcript', document.getElementById('transcript').value);
+  const sid = $('enrollId').value.trim();
+  if (sid) form.append('speaker_id', sid);
+  form.append('caller_known', $('callerKnown').checked);
+  form.append('off_hours', $('offHours').checked);
+  form.append('first_contact', $('firstContact').checked);
+  form.append('transcript', $('transcript').value);
 
   try {
-    const res = await fetch(`${API_BASE}/analyze`, { method: 'POST', body: form });
-    const data = await res.json();
-    log.textContent = `Backend: ${data.backend}\n`;
-    if (data.context_reasons.length) log.textContent += `Context flags: ${data.context_reasons.join('; ')}\n\n`;
-    replay(data.timeline, data.recommendation);
-  } catch (err) {
-    log.textContent = 'Error contacting API — is `uvicorn src.api:app --reload` running on :8000?\n' + err;
-    btn.disabled = false;
+    const d = await post('/analyze', form, $('analyzeStatus'), 'Analysing call…');
+    setStatus($('analyzeStatus'), '');
+    render(d);
+    if (d.alert_triggered) verifyAudit();
+  } catch (e) {
+    setStatus($('analyzeStatus'), '✗ ' + e.message, 'err');
   }
+  syncButtons();
 };
 
-function replay(timeline, recommendation) {
-  let i = 0;
-  function step() {
-    if (i >= timeline.length) {
-      log.textContent += `\n${recommendation}`;
-      document.getElementById('analyzeBtn').disabled = false;
-      return;
-    }
-    const t = timeline[i];
-    gaugeFill.style.width = `${Math.round(t.risk_score * 100)}%`;
-    gaugeFill.style.background = levelColor(t.level);
-    levelLabel.textContent = `Level: ${t.level}  (t=${t.start_time}s, risk=${t.risk_score})`;
-    document.getElementById('v-acoustic').textContent = t.acoustic_score;
-    document.getElementById('v-speaker').textContent = t.speaker_mismatch;
-    document.getElementById('v-context').textContent = t.context_score;
-    if (t.alert) alertBanner.style.display = 'block';
-    log.textContent += `t=${t.start_time}s  risk=${t.risk_score}  ${t.level}  (dominant: ${t.dominant_signal})${t.alert ? '  <-- ALERT' : ''}\n`;
-    i++;
-    setTimeout(step, Math.max(300, t.duration * 300));
+/* ---------- render verdict ---------- */
+function pct(x) { return Math.round(x * 100) + '%'; }
+
+function render(d) {
+  const alert = d.alert_triggered;
+  const level = d.final_level;
+  const colour = LEVEL_COLOR[level] || 'var(--green)';
+
+  const v = $('verdict');
+  v.className = 'card show ' + (alert ? 'alert' : 'genuine');
+
+  $('headlineText').textContent = alert
+    ? 'Possible voice clone detected'
+    : 'Voice appears genuine';
+  v.querySelector('.dot').style.background = colour;
+
+  $('levelBadge').textContent = level;
+  $('levelBadge').style.color = colour;
+  $('levelBadge').style.background = LEVEL_BG[level] || '#dcfce7';
+  $('scoreText').textContent =
+    `· peak risk ${d.final_risk_score.toFixed(2)} of 1.00, alert threshold 0.40`
+    + (d.score_at_alert != null ? ` · first crossed at ${d.score_at_alert.toFixed(2)}` : '');
+
+  $('gaugeFill').style.width = pct(d.final_risk_score);
+  $('gaugeFill').style.background = colour;
+
+  // --- acoustic ---
+  const worstAcoustic = Math.max(...d.timeline.map(t => t.acoustic_score));
+  setSignal('sigAcoustic', worstAcoustic,
+    worstAcoustic >= 0.6 ? 'Synthetic artefacts found'
+      : worstAcoustic >= 0.3 ? 'Some irregularity' : 'Sounds naturally human',
+    worstAcoustic >= 0.3 ? 'var(--orange)' : 'var(--green)');
+
+  // --- speaker ---
+  const sig = $('sigSpeaker');
+  if (!d.speaker_enrolled) {
+    sig.classList.add('na');
+    sig.querySelector('.verdictline').textContent = 'Not checked';
+    sig.querySelector('.verdictline').style.color = 'var(--muted)';
+    sig.querySelector('.bar i').style.width = '0';
+    sig.querySelector('.plain').textContent = d.speaker_id
+      ? `No voiceprint is enrolled for "${d.speaker_id}", so this call could not be compared against a known voice. Enrol one in step 1 to activate this check.`
+      : 'No speaker ID was given, so there was nothing to compare this voice against. Enrol a reference voice in step 1 to activate this check.';
+  } else {
+    sig.classList.remove('na');
+    const worst = Math.max(...d.timeline.map(t => t.speaker_mismatch));
+    setSignal('sigSpeaker', worst,
+      worst >= 0.65 ? `Does NOT match "${d.speaker_id}"`
+        : worst >= 0.35 ? `Uncertain match to "${d.speaker_id}"`
+          : `Matches "${d.speaker_id}"`,
+      worst >= 0.35 ? 'var(--red)' : 'var(--green)');
+    sig.querySelector('.plain').textContent =
+      `Compared against the enrolled voiceprint for "${d.speaker_id}". `
+      + (worst >= 0.65
+        ? 'The voice on this call is a different person from the one enrolled.'
+        : worst >= 0.35
+          ? 'The comparison was inconclusive — try a longer or cleaner reference recording.'
+          : 'The voice on this call is consistent with the enrolled person.');
   }
-  step();
+
+  // --- context ---
+  const ctx = d.timeline.length ? d.timeline[0].context_score : 0;
+  setSignal('sigContext', ctx,
+    ctx >= 0.5 ? 'Several risk flags' : ctx > 0 ? 'Minor risk flags' : 'Nothing unusual',
+    ctx >= 0.5 ? 'var(--amber)' : ctx > 0 ? 'var(--amber)' : 'var(--green)');
+
+  const reasons = $('reasons');
+  if (d.context_reasons && d.context_reasons.length) {
+    reasons.style.display = 'block';
+    reasons.querySelector('ul').innerHTML =
+      d.context_reasons.map(r => `<li>${escapeHtml(r)}</li>`).join('');
+  } else {
+    reasons.style.display = 'none';
+  }
+
+  $('rec').className = 'rec ' + (alert ? 'alert' : 'genuine');
+  $('rec').textContent = (alert ? '⚠ ' : '✓ ') + d.recommendation
+    + (alert ? ' This alert has been written to the tamper-evident audit trail.' : '');
+
+  $('timeline').textContent =
+    'time    risk  level     acoustic  speaker  context  dominant\n'
+    + '─'.repeat(62) + '\n'
+    + d.timeline.map(t =>
+      `${String(t.start_time).padStart(5)}s  ${t.risk_score.toFixed(2)}  ${t.level.padEnd(9)} `
+      + `${t.acoustic_score.toFixed(2).padStart(7)}  ${t.speaker_mismatch.toFixed(2).padStart(7)}  `
+      + `${t.context_score.toFixed(2).padStart(7)}  ${t.dominant_signal}${t.alert ? '   ← ALERT' : ''}`
+    ).join('\n');
+
+  v.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
+
+function setSignal(id, value, verdictText, colour) {
+  const el = $(id);
+  el.classList.remove('na');
+  const vl = el.querySelector('.verdictline');
+  vl.textContent = verdictText;
+  vl.style.color = colour;
+  const bar = el.querySelector('.bar i');
+  bar.style.width = pct(value);
+  bar.style.background = colour;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+/* ---------- audit ---------- */
+async function verifyAudit() {
+  const state = $('auditState'), detail = $('auditDetail');
+  state.textContent = 'checking…';
+  state.style.color = 'var(--muted)';
+  detail.textContent = '';
+  try {
+    const res = await fetch(`${API}/audit/verify`);
+    if (!res.ok) throw new Error(`server returned ${res.status}`);
+    const d = await res.json();
+    if (d.valid) {
+      state.textContent = `✓ Verified — ${d.record_count} record${d.record_count === 1 ? '' : 's'}, chain intact`;
+      state.style.color = 'var(--green)';
+      detail.textContent = 'Every alert record still seals the one before it. Nothing has been edited, deleted, reordered or backdated.';
+    } else {
+      state.textContent = '✗ TAMPERED — chain broken';
+      state.style.color = 'var(--red)';
+      detail.textContent =
+        `Verification failed at record ${d.broken_at} (${d.record_count} record(s) verified before it).`
+        + (d.reason ? ` Reason: ${d.reason}` : '');
+    }
+  } catch (e) {
+    state.textContent = '✗ could not verify';
+    state.style.color = 'var(--red)';
+    detail.textContent = 'Could not reach the audit endpoint. Is the server running on port 8000?';
+  }
+}
+
+$('auditBtn').onclick = verifyAudit;
+
+checkHealth();
 </script>
 </body>
 </html>

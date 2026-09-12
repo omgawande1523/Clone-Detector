@@ -1,3 +1,4 @@
+# Core pipeline + API
 numpy
 scipy
 soundfile
@@ -5,3 +6,19 @@ fastapi
 uvicorn
 python-multipart
 pydantic
+
+# Speaker-consistency layer (Resemblyzer speaker embeddings).
+# The pretrained weights ship inside the package, so once installed
+# this runs fully offline -- no download at demo time.
+#
+# Resemblyzer pulls in torch and librosa, so this install is ~300 MB
+# and takes a few minutes. Install the CPU-only torch build first if
+# you want to avoid the multi-GB CUDA wheels:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+resemblyzer
+librosa
+
+# On Windows install webrtcvad-wheels, NOT webrtcvad: the latter has
+# no prebuilt wheel and needs Microsoft C++ Build Tools to compile.
+webrtcvad-wheels; sys_platform == "win32"
+webrtcvad; sys_platform != "win32"

@@ -109,3 +109,20 @@ def test_corrupt_line_is_reported_not_raised(log):
 
 def test_empty_log_is_valid(tmp_path):
     assert AuditLog(path=str(tmp_path / "empty.jsonl")).verify_chain()["valid"] is True
+
+
+def test_missing_file_reads_as_empty_chain(tmp_path):
+    """The log file is created in __init__, but can be deleted or
+    rotated afterwards. That must not 500 every subsequent alert."""
+    path = str(tmp_path / "audit.jsonl")
+    audit = AuditLog(path=path)
+    audit.append({"level": "HIGH"})
+
+    import os
+    os.remove(path)                      # rotated away underneath us
+
+    assert audit.verify_chain()["valid"] is True       # empty, not a crash
+    audit.append({"level": "CRITICAL"})                # must still record
+    result = audit.verify_chain()
+    assert result["valid"] is True
+    assert result["record_count"] == 1
