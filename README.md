@@ -81,7 +81,7 @@ pip install -r requirements-dev.txt
 pytest -q
 ```
 
-153 tests. The suite is built around the bugs that actually shipped, so
+159 tests. The suite is built around the bugs that actually shipped, so
 each of these would fail if the bug came back:
 
 | test file | pins |
@@ -95,6 +95,7 @@ each of these would fail if the bug came back:
 | `test_api.py` | error paths return 4xx with a readable message, never a 500 |
 | `test_transformer_backend.py` | wav2vec2 backend on both fixture sets, cross- and in-domain reported separately |
 | `test_fused_modes.py` | full fused pipeline per mode: zero FP in both; targeted-clone recall floor in transformer mode; heuristic acoustic weight is exactly zero |
+| `test_enroll_auth.py` | with ENROLL_TOKEN set, /enroll needs the header (401 otherwise); unset is open and /health says so; a re-enrolment is hash-chained |
 | `test_label_mapping.py` | the spoof class is resolved once from id2label or an explicit override, and ambiguous labels raise instead of guessing |
 | `test_resampling.py` | one anti-aliased resampler everywhere: a >8 kHz tone does not alias into band; a 48 kHz round trip keeps its verdict |
 | `test_risk_engine_consistency.py` | a single unsustained crossing reports final_level HIGH, sustained_level LOW, and never says "no signal detected" |
@@ -401,6 +402,22 @@ that runs with zero downloads — useful for unreliable venue wifi. The
 transformer backend is the accuracy path for your actual numbers;
 mention both so judges see the trade-off was a choice, not a gap.
 
+**"Who can enrol a voiceprint? Can an attacker just overwrite the CEO's?"**
+In this prototype, only if you let them: set `ENROLL_TOKEN` and
+`POST /enroll` requires a matching `X-Enroll-Token` header (401
+otherwise); leave it unset and enrolment is open, but `/health` reports
+`enroll_protected: false` and the dashboard shows a one-line warning,
+so nobody mistakes an open demo for a hardened one. Either way,
+re-enrolling an existing speaker writes a record into the same hash
+chain as the alerts, with the SHA-256 of the old and new voiceprints —
+overwriting is permitted but never silent. The honest production
+answer: enrolment is not an open endpoint at all. It is a supervised
+onboarding step on an internal service behind mTLS / IAM, done once
+with the account holder present, and the voiceprint store is
+append-only with the same anchoring as the audit log. The shared
+secret here is the smallest thing that makes the question answerable
+in a prototype, not the design.
+
 **"What about privacy / data protection?"**
 Inference runs on-device/on-premises rather than sending audio to a
 third-party cloud, and the audit log stores only outcomes and reasons
@@ -434,6 +451,11 @@ still being useful for compliance.
   data you don't yet have.
 - The audit log is a local hash chain, not yet an anchored distributed
   ledger — say so explicitly, it's a prototype of the mechanism.
+- **Enrolment is the root of trust and is only token-guarded.** With
+  `ENROLL_TOKEN` unset anyone who can reach the port can overwrite a
+  voiceprint (the overwrite is audited, not prevented). Production needs
+  enrolment as a supervised onboarding step on an authenticated internal
+  service, not a shared secret — see the Q&A entry.
 - Container formats: WAV/FLAC/OGG/AIFF (whatever `libsndfile` reads);
   MP3/M4A/WebM call formats need an `ffmpeg` decode step before
   `audio_pipeline.py`. Any sample rate is accepted and resampled once,

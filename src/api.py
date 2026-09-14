@@ -41,6 +41,8 @@ being read into memory whole, so a large or hostile upload cannot
 exhaust RAM.
 """
 
+import hashlib
+import hmac
 import io
 import json
 import os
@@ -49,7 +51,7 @@ import time
 
 import numpy as np
 import soundfile as sf
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, UploadFile, File, Form, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -142,10 +144,32 @@ def _load_or_400(path: str):
         )
 
 
+# ---------------------------------------------------------- enrolment guard
+#
+# The voiceprint is the root of trust for the speaker-consistency layer:
+# whoever can overwrite it can make a clone "match". If ENROLL_TOKEN is
+# set, POST /enroll requires a matching X-Enroll-Token header. If it is
+# unset, enrolment stays open (this is a prototype) but /health and the
+# dashboard say so. Read at request time so a deployment can set it
+# without a code change and tests can toggle it.
+
+def _enroll_token():
+    return os.environ.get("ENROLL_TOKEN") or None
+
+
+def _enroll_protected() -> bool:
+    return _enroll_token() is not None
+
+
+def _voiceprint_hash(vp) -> str:
+    return hashlib.sha256(json.dumps(vp, separators=(",", ":")).encode()).hexdigest()
+
+
 @app.get("/health")
 def health():
     return {
         "status": "ok",
+        "enroll_protected": _enroll_protected(),
         "backend": _detector.name,
         "detection_mode": _mode,
         # Which output class the transformer treats as "spoof" -- visible
@@ -164,7 +188,13 @@ def health():
 
 
 @app.post("/enroll")
-async def enroll(speaker_id: str = Form(...), file: UploadFile = File(...)):
+async def enroll(speaker_id: str = Form(...), file: UploadFile = File(...),
+                 x_enroll_token: str = Header(default=None)):
+    token = _enroll_token()
+    if token is not None:
+        if not x_enroll_token or not hmac.compare_digest(x_enroll_token, token):
+            raise HTTPException(status_code=401, detail="Enrolment requires a valid X-Enroll-Token header.")
+
     speaker_id = speaker_id.strip()
     if not speaker_id:
         raise HTTPException(status_code=400, detail="speaker_id must not be empty.")
@@ -172,6 +202,7 @@ async def enroll(speaker_id: str = Form(...), file: UploadFile = File(...)):
     tmp_path = await _save_upload(file, MAX_ENROLL_BYTES)
     try:
         wav, sr = _load_or_400(tmp_path)
+        previous = _voiceprints._data.get(speaker_id)
         try:
             _voiceprints.enroll(speaker_id, wav, sr)
         except ValueError as e:
@@ -179,10 +210,25 @@ async def enroll(speaker_id: str = Form(...), file: UploadFile = File(...)):
             raise HTTPException(status_code=400, detail=str(e))
     finally:
         os.remove(tmp_path)
+
+    overwritten = previous is not None
+    if overwritten:
+        # Overwriting a voiceprint is permitted but must be tamper-evident:
+        # it goes into the same hash chain as the alerts.
+        _audit.append({
+            "event": "voiceprint_overwritten",
+            "speaker_id": speaker_id,
+            "old_voiceprint_sha256": _voiceprint_hash(previous),
+            "new_voiceprint_sha256": _voiceprint_hash(_voiceprints._data[speaker_id]),
+            "authenticated": token is not None,
+        })
     return {
         "status": "enrolled",
         "speaker_id": speaker_id,
         "duration_seconds": round(len(wav) / sr, 2),
+        "overwrote_existing": overwritten,
+        "audit_logged": overwritten,
+        "enroll_protected": token is not None,
     }
 
 

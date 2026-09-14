@@ -172,6 +172,7 @@
 
     <button id="enrollBtn" class="ghost" disabled>Enrol voiceprint</button>
     <div id="enrollStatus" class="status"></div>
+    <div id="enrollGuard" class="status" style="color:var(--amber)" hidden>⚠ Enrolment is unauthenticated in this deployment (ENROLL_TOKEN not set): anyone who can reach the server can overwrite a voiceprint. Overwrites are written to the audit trail.</div>
   </div>
 
   <!-- STEP 2 -->
@@ -297,6 +298,7 @@ async function checkHealth() {
     $('serverPill').textContent = `server online · ${d.detection_mode ? d.detection_mode.mode : d.backend}`;
     $('serverDown').classList.remove('show');
     showMode(d.detection_mode);
+    $('enrollGuard').hidden = d.enroll_protected !== false;
     // before any call: if an unenrolled call can never alert in this mode, say so now
     if (d.live_capability && !d.live_capability.unenrolled.can_ever_alert) {
       showCapability({ can_ever_alert: false, capability_warning:
@@ -428,7 +430,9 @@ $('enrollBtn').onclick = async () => {
   form.append('file', refFile);
   try {
     const d = await post('/enroll', form, $('enrollStatus'), 'Building voiceprint…');
-    setStatus($('enrollStatus'), `✓ Voiceprint stored for "${d.speaker_id}" (${d.duration_seconds}s of audio). Calls analysed with this speaker ID will now be checked against it.`, 'ok');
+    setStatus($('enrollStatus'), `✓ Voiceprint stored for "${d.speaker_id}" (${d.duration_seconds}s of audio).`
+      + (d.overwrote_existing ? ' Replaced an existing voiceprint — recorded in the audit trail.' : '')
+      + ' Calls analysed with this speaker ID will now be checked against it.', 'ok');
   } catch (e) {
     setStatus($('enrollStatus'), '✗ ' + e.message, 'err');
   }
