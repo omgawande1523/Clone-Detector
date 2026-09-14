@@ -18,6 +18,16 @@ POST /analyze
     (acoustic + speaker-consistency + context), plus the call verdict.
     Any triggered alert is appended to the tamper-evident audit log.
 
+WS /ws/live
+    True real-time path. Client sends one JSON "start" message (same
+    fields as /analyze's form), then binary audio chunks (WAV, or raw
+    int16 PCM @ 16 kHz mono) as they are captured. Each chunk is scored
+    the moment it arrives — the same detector -> speaker-consistency ->
+    context -> fusion -> risk-engine code as /analyze, with ONE
+    RiskEngine for the whole call so EMA/sustain carry across chunks —
+    and the result is sent back immediately. A JSON {"type": "stop"}
+    ends the call and returns the same verdict block /analyze returns.
+
 GET /audit/verify
     Confirms the audit log's hash chain has not been tampered with —
     a live demo of the "Blockchain & Cybersecurity" compliance angle.
@@ -31,10 +41,16 @@ being read into memory whole, so a large or hostile upload cannot
 exhaust RAM.
 """
 
+import io
+import json
 import os
 import tempfile
+import time
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+import numpy as np
+import soundfile as sf
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 
 from .audio_pipeline import chunk_audio, load_mono, DEFAULT_CHUNK_SECONDS
@@ -159,6 +175,62 @@ async def enroll(speaker_id: str = Form(...), file: UploadFile = File(...)):
     }
 
 
+def _score_chunk(waveform, sample_rate, start_time, speaker_id, speaker_enrolled, ctx, engine):
+    """The one place a chunk is scored. Both /analyze (batch) and
+    /ws/live (streaming) call this, so the two paths cannot drift."""
+    acoustic = _detector.predict_detailed(waveform, sample_rate)
+    speaker_mismatch = (
+        _voiceprints.mismatch_score(speaker_id, waveform, sample_rate)
+        if speaker_enrolled else 0.0
+    )
+    fused = fuse(acoustic["spoof_prob"], speaker_mismatch, ctx["context_score"], _weights)
+    result = engine.update(fused["fused_score"])
+    return {
+        "start_time": round(start_time, 2),
+        "duration": round(len(waveform) / sample_rate, 2),
+        **result,
+        "acoustic_score": round(fused["acoustic_score"], 3),
+        "speaker_mismatch": round(fused["speaker_mismatch"], 3),
+        "context_score": round(fused["context_score"], 3),
+        "dominant_signal": fused["dominant_signal"],
+    }
+
+
+def _audit_alert(speaker_id, verdict, ctx):
+    # Log only the outcome + reasons, never raw audio — keeps the audit
+    # trail privacy-preserving while still being useful to a reviewer.
+    _audit.append({
+        "speaker_id": speaker_id,
+        "peak_risk_score": verdict["peak_risk_score"],
+        "peak_level": verdict["peak_level"],
+        "score_at_alert": verdict["score_at_alert"],
+        "context_reasons": ctx["reasons"],
+    })
+
+
+def _verdict_payload(speaker_id, speaker_enrolled, ctx, timeline, verdict):
+    return {
+        "backend": _detector.name,
+        "detection_mode": _mode,
+        "speaker_id": speaker_id,
+        "speaker_enrolled": speaker_enrolled,
+        "context_reasons": ctx["reasons"],
+        "timeline": timeline,
+        "final_risk_score": verdict["peak_risk_score"],
+        "final_level": verdict["peak_level"],
+        "alert_triggered": verdict["alert_triggered"],
+        "score_at_alert": verdict["score_at_alert"],
+        "final_ema": verdict["final_ema"],
+        "recommendation": (
+            "Recommend secondary verification (call-back on a known number) "
+            "before proceeding with any sensitive action."
+            if verdict["alert_triggered"] else
+            "No strong impersonation signal detected in this call."
+        ),
+        "audit_logged": verdict["alert_triggered"],
+    }
+
+
 @app.post("/analyze")
 async def analyze(
     file: UploadFile = File(...),
@@ -199,22 +271,8 @@ async def analyze(
             )
 
         for chunk in chunks:
-            acoustic = _detector.predict_detailed(chunk.waveform, chunk.sample_rate)
-            speaker_mismatch = (
-                _voiceprints.mismatch_score(speaker_id, chunk.waveform, chunk.sample_rate)
-                if speaker_enrolled else 0.0
-            )
-            fused = fuse(acoustic["spoof_prob"], speaker_mismatch, ctx["context_score"], _weights)
-            result = engine.update(fused["fused_score"])
-            timeline.append({
-                "start_time": round(chunk.start_time, 2),
-                "duration": round(chunk.duration, 2),
-                **result,
-                "acoustic_score": round(fused["acoustic_score"], 3),
-                "speaker_mismatch": round(fused["speaker_mismatch"], 3),
-                "context_score": round(fused["context_score"], 3),
-                "dominant_signal": fused["dominant_signal"],
-            })
+            timeline.append(_score_chunk(chunk.waveform, chunk.sample_rate, chunk.start_time,
+                                         speaker_id, speaker_enrolled, ctx, engine))
     finally:
         os.remove(tmp_path)
 
@@ -228,39 +286,118 @@ async def analyze(
     # call cloned early and clean later is still a cloned call; the old
     # behaviour could return alert_triggered=true alongside level=LOW.
     verdict = engine.summary()
-
     if verdict["alert_triggered"]:
-        # Log only the outcome + reasons, never raw audio — keeps the
-        # audit trail privacy-preserving while still being useful to a
-        # compliance reviewer.
-        _audit.append({
-            "speaker_id": speaker_id,
-            "peak_risk_score": verdict["peak_risk_score"],
-            "peak_level": verdict["peak_level"],
-            "score_at_alert": verdict["score_at_alert"],
-            "context_reasons": ctx["reasons"],
-        })
+        _audit_alert(speaker_id, verdict, ctx)
+    return _verdict_payload(speaker_id, speaker_enrolled, ctx, timeline, verdict)
 
-    return {
-        "backend": _detector.name,
+
+# ------------------------------------------------------------ live path
+
+# Hard cap keeps a hostile client from streaming a 50 MB frame; a 5 s
+# 16 kHz int16 chunk is ~160 KB, a 48 kHz float WAV of the same is ~1 MB.
+MAX_LIVE_CHUNK_BYTES = 4 * 1024 * 1024
+LIVE_SR = 16000
+
+
+def _decode_live_chunk(data: bytes):
+    """WAV (any rate; downmixed and resampled to 16 kHz) or raw int16
+    PCM already at 16 kHz mono. Returns (float32 waveform, 16000)."""
+    if data[:4] == b"RIFF":
+        wav, sr = sf.read(io.BytesIO(data), dtype="float32", always_2d=False)
+        if wav.ndim > 1:
+            wav = wav.mean(axis=1)
+        if sr != LIVE_SR:
+            n = int(len(wav) * LIVE_SR / sr)
+            wav = np.interp(np.linspace(0, len(wav) - 1, n), np.arange(len(wav)), wav).astype(np.float32)
+        return wav, LIVE_SR
+    return np.frombuffer(data, dtype="<i2").astype(np.float32) / 32768.0, LIVE_SR
+
+
+@app.websocket("/ws/live")
+async def ws_live(ws: WebSocket):
+    await ws.accept()
+    # 1. call setup: same fields as /analyze's form
+    try:
+        start = await ws.receive_json()
+    except Exception:
+        await ws.close(code=1003, reason="first message must be a JSON start message")
+        return
+    speaker_id = (start.get("speaker_id") or "").strip() or None
+    ctx = score_context(
+        caller_known=bool(start.get("caller_known", True)),
+        off_hours=bool(start.get("off_hours", False)),
+        first_contact=bool(start.get("first_contact", False)),
+        transcript=start.get("transcript", "") or "",
+    )
+    speaker_enrolled = bool(speaker_id and _voiceprints.has(speaker_id))
+    engine = RiskEngine()               # ONE engine for the whole call
+    timeline = []
+    call_clock = 0.0
+    audit_logged = False
+    await ws.send_json({
+        "type": "ready",
         "detection_mode": _mode,
         "speaker_id": speaker_id,
         "speaker_enrolled": speaker_enrolled,
         "context_reasons": ctx["reasons"],
-        "timeline": timeline,
-        "final_risk_score": verdict["peak_risk_score"],
-        "final_level": verdict["peak_level"],
-        "alert_triggered": verdict["alert_triggered"],
-        "score_at_alert": verdict["score_at_alert"],
-        "final_ema": verdict["final_ema"],
-        "recommendation": (
-            "Recommend secondary verification (call-back on a known number) "
-            "before proceeding with any sensitive action."
-            if verdict["alert_triggered"] else
-            "No strong impersonation signal detected in this call."
-        ),
-        "audit_logged": verdict["alert_triggered"],
-    }
+        "chunk_seconds": DEFAULT_CHUNK_SECONDS,
+    })
+
+    # 2. score each chunk the moment it lands, reply immediately
+    try:
+        while True:
+            msg = await ws.receive()
+            if msg.get("type") == "websocket.disconnect":
+                break
+            if msg.get("bytes"):
+                t_recv = time.time()
+                data = msg["bytes"]
+                if len(data) > MAX_LIVE_CHUNK_BYTES:
+                    await ws.send_json({"type": "error", "detail": "chunk too large"})
+                    continue
+                try:
+                    waveform, sr = _decode_live_chunk(data)
+                except Exception as e:
+                    await ws.send_json({"type": "error", "detail": f"could not decode chunk ({e})"})
+                    continue
+                if len(waveform) < sr * 0.2:
+                    await ws.send_json({"type": "error", "detail": "chunk too short to score"})
+                    continue
+                # Scoring is CPU-bound (~0.2-0.4 s with the transformer);
+                # run it off the event loop so the socket stays responsive.
+                row = await run_in_threadpool(
+                    _score_chunk, waveform, sr, call_clock, speaker_id, speaker_enrolled, ctx, engine)
+                call_clock += len(waveform) / sr
+                timeline.append(row)
+                if row["alert"] and not audit_logged:
+                    # Same audit write as /analyze, but at the moment the
+                    # alert first fires — a live call may never "end".
+                    _audit_alert(speaker_id, engine.summary(), ctx)
+                    audit_logged = True
+                t_sent = time.time()
+                await ws.send_json({
+                    "type": "chunk",
+                    "index": len(timeline) - 1,
+                    **row,
+                    "audit_logged": audit_logged,
+                    "server_recv": t_recv,
+                    "server_sent": t_sent,
+                    "compute_ms": round((t_sent - t_recv) * 1000, 1),
+                })
+            elif msg.get("text"):
+                try:
+                    cmd = json.loads(msg["text"])
+                except Exception:
+                    cmd = {}
+                if cmd.get("type") == "stop":
+                    verdict = engine.summary()
+                    payload = _verdict_payload(speaker_id, speaker_enrolled, ctx, timeline, verdict)
+                    payload["type"] = "summary"
+                    payload["audit_logged"] = audit_logged
+                    await ws.send_json(payload)
+                    break
+    except WebSocketDisconnect:
+        pass
 
 
 @app.get("/audit/verify")

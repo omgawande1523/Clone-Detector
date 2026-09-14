@@ -109,6 +109,20 @@
   .banner b { display: block; margin-bottom: 3px; }
   .footnote { color: var(--muted); font-size: 12px; margin-top: 22px; text-align: center; }
 
+  /* live mode */
+  .live-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  button.live { background: #16a34a; }
+  button.live:hover:not(:disabled) { background: #15803d; }
+  button.stop { background: var(--red); }
+  button.stop:hover:not(:disabled) { background: #b91c1c; }
+  #liveState { font-size: 13px; color: var(--muted); }
+  .rec-dot { display: inline-block; width: 10px; height: 10px; border-radius: 999px; background: var(--red); margin-right: 6px; animation: pulse 1s infinite; vertical-align: -1px; }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .25 } }
+  .latency { font-family: ui-monospace, Consolas, monospace; font-size: 12px; color: var(--muted); }
+  .mode-tabs { display: flex; gap: 8px; margin: 4px 0 14px; }
+  .mode-tabs button { margin: 0; padding: 7px 14px; font-size: 13px; }
+  .mode-tabs button.off { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+
   /* detection-mode banner: a judge must never be unsure which mode produced a result */
   #modeBanner { display: none; margin-top: 14px; padding: 11px 15px; border-radius: 9px; font-size: 13.5px; border: 1px solid; }
   #modeBanner.show { display: block; }
@@ -173,17 +187,35 @@
   <!-- STEP 3 -->
   <div class="card">
     <h2><span class="step">3</span>Analyse the call</h2>
-    <p class="hint">Upload the call recording. It is split into 5-second windows and scored as if streaming live.</p>
-    <div id="dropzone" class="drop">Click or drop the call recording (.wav)</div>
-    <input type="file" id="fileInput" accept=".wav,.flac,.ogg,audio/*" hidden>
-    <button id="analyzeBtn" disabled>Analyse call</button>
-    <div id="analyzeStatus" class="status"></div>
+    <div class="mode-tabs">
+      <button id="tabLive" class="">Live call (microphone)</button>
+      <button id="tabUpload" class="off">Upload a recording</button>
+    </div>
+
+    <div id="paneLive">
+      <p class="hint">True real-time path. Your microphone is captured in 5-second segments; each one is scored the moment it is recorded and the gauge moves while you are still talking. Enrol a voice in step 1 first so the speaker check has something to compare against.</p>
+      <div class="live-row">
+        <button id="liveStart" class="live" style="margin-top:0">● Start live call</button>
+        <button id="liveStop" class="stop" style="margin-top:0" disabled>■ Stop</button>
+        <span id="liveState">idle</span>
+      </div>
+      <div id="liveStatus" class="status"></div>
+    </div>
+
+    <div id="paneUpload" hidden>
+      <p class="hint">Batch analysis of a recording — useful for testing against fixture files. Split into 5-second windows and scored through the same pipeline as the live path.</p>
+      <div id="dropzone" class="drop">Click or drop the call recording (.wav)</div>
+      <input type="file" id="fileInput" accept=".wav,.flac,.ogg,audio/*" hidden>
+      <button id="analyzeBtn" disabled>Analyse call</button>
+      <div id="analyzeStatus" class="status"></div>
+    </div>
   </div>
 
   <!-- VERDICT -->
   <div id="verdict" class="card">
     <div class="headline"><span class="dot"></span><span id="headlineText"></span><span id="verdictMode" class="modetag"></span></div>
     <div class="levelline">Risk level <span id="levelBadge" class="badge"></span> <span id="scoreText"></span></div>
+    <div id="liveLatency" class="latency" hidden></div>
 
     <div class="gauge"><div id="gaugeFill" class="gauge-fill"></div></div>
     <div class="gauge-marks">
@@ -407,6 +439,7 @@ $('analyzeBtn').onclick = async () => {
 function pct(x) { return Math.round(x * 100) + '%'; }
 
 function render(d) {
+  if (d.type !== 'summary') $('liveLatency').hidden = true;
   const alert = d.alert_triggered;
   const level = d.final_level;
   const colour = LEVEL_COLOR[level] || 'var(--green)';
@@ -524,6 +557,190 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
+
+/* ---------- live call (microphone -> /ws/live) ---------- */
+const CHUNK_MS = 5000;
+const live = { ws: null, stream: null, running: false, ac: null, enrolled: false, sid: '', n: 0, gaps: [] };
+
+$('tabLive').onclick = () => { $('paneLive').hidden = false; $('paneUpload').hidden = true; $('tabLive').className = ''; $('tabUpload').className = 'off'; };
+$('tabUpload').onclick = () => { $('paneLive').hidden = true; $('paneUpload').hidden = false; $('tabLive').className = 'off'; $('tabUpload').className = ''; };
+
+function liveState(msg, rec) {
+  $('liveState').innerHTML = (rec ? '<span class="rec-dot"></span>' : '') + escapeHtml(msg);
+}
+
+/* one MediaRecorder per segment, so every blob is a complete, decodable file */
+function recordSegment(stream, ms) {
+  return new Promise((resolve, reject) => {
+    let rec;
+    try { rec = new MediaRecorder(stream); } catch (e) { return reject(e); }
+    const parts = [];
+    rec.ondataavailable = e => e.data.size && parts.push(e.data);
+    rec.onstop = () => resolve(new Blob(parts, { type: rec.mimeType }));
+    rec.onerror = e => reject(e.error || e);
+    rec.start();
+    setTimeout(() => rec.state !== 'inactive' && rec.stop(), ms);
+  });
+}
+
+/* decode the segment in the browser and hand the server plain 16 kHz mono WAV */
+async function blobToWav16k(blob) {
+  if (!live.ac) live.ac = new (window.AudioContext || window.webkitAudioContext)();
+  const audio = await live.ac.decodeAudioData(await blob.arrayBuffer());
+  const src = audio.getChannelData(0), inRate = audio.sampleRate, outRate = 16000;
+  const n = Math.floor(src.length * outRate / inRate);
+  const pcm = new Int16Array(n);
+  for (let i = 0; i < n; i++) {
+    const pos = i * inRate / outRate, j = Math.floor(pos), f = pos - j;
+    const v = src[j] + (src[Math.min(j + 1, src.length - 1)] - src[j]) * f;
+    pcm[i] = Math.max(-1, Math.min(1, v)) * 32767;
+  }
+  const buf = new ArrayBuffer(44 + pcm.length * 2), dv = new DataView(buf);
+  const str = (o, t) => { for (let i = 0; i < t.length; i++) dv.setUint8(o + i, t.charCodeAt(i)); };
+  str(0, 'RIFF'); dv.setUint32(4, 36 + pcm.length * 2, true); str(8, 'WAVE');
+  str(12, 'fmt '); dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
+  dv.setUint32(24, outRate, true); dv.setUint32(28, outRate * 2, true); dv.setUint16(32, 2, true); dv.setUint16(34, 16, true);
+  str(36, 'data'); dv.setUint32(40, pcm.length * 2, true);
+  new Int16Array(buf, 44).set(pcm);
+  return buf;
+}
+
+function showLiveShell(mode) {
+  const v = $('verdict');
+  v.className = 'card show genuine';
+  v.querySelector('.dot').style.background = 'var(--muted)';
+  $('headlineText').textContent = 'Listening…';
+  const vm = $('verdictMode');
+  vm.className = 'modetag ' + (mode && mode.security_posture === 'full' ? 'full' : 'reduced');
+  vm.textContent = mode && mode.security_posture === 'full' ? 'TRANSFORMER MODE · LIVE' : 'HEURISTIC-ONLY · REDUCED · LIVE';
+  $('levelBadge').textContent = '—'; $('levelBadge').style.color = 'var(--muted)'; $('levelBadge').style.background = '#eceef2';
+  $('scoreText').textContent = '· waiting for the first 5-second window';
+  $('gaugeFill').style.width = '0%';
+  $('liveLatency').hidden = false; $('liveLatency').textContent = '';
+  $('reasons').style.display = 'none';
+  $('rec').className = 'rec genuine'; $('rec').textContent = 'Scoring live. The verdict updates every 5 seconds while the call continues.';
+  $('timeline').textContent = 'time    risk  level     acoustic  speaker  context  dominant   latency\n' + '─'.repeat(70) + '\n';
+  ['sigAcoustic', 'sigSpeaker', 'sigContext'].forEach(id => { const el = $(id); el.querySelector('.verdictline').textContent = '—'; el.querySelector('.bar i').style.width = '0'; });
+  v.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function renderLiveChunk(m, tSent) {
+  const colour = LEVEL_COLOR[m.level] || 'var(--green)';
+  const alertNow = m.alert;
+  const v = $('verdict');
+  v.className = 'card show ' + (alertNow ? 'alert' : m.level === 'HIGH' || m.level === 'CRITICAL' ? 'alert' : 'genuine');
+  v.querySelector('.dot').style.background = colour;
+  $('headlineText').textContent = alertNow ? 'Possible voice clone detected'
+    : (m.level === 'HIGH' || m.level === 'CRITICAL') ? 'Suspicious — possible voice clone (unconfirmed)'
+    : 'Voice appears genuine so far';
+  $('levelBadge').textContent = m.level; $('levelBadge').style.color = colour; $('levelBadge').style.background = LEVEL_BG[m.level] || '#dcfce7';
+  $('scoreText').textContent = `· window ${m.index + 1} · risk ${m.risk_score.toFixed(2)} of 1.00, alert threshold 0.40`;
+  $('gaugeFill').style.width = pct(m.risk_score); $('gaugeFill').style.background = colour;
+
+  const gap = tSent ? (performance.now() - tSent) : null;
+  if (gap !== null) live.gaps.push(gap);
+  $('liveLatency').textContent =
+    `latency this window: ${gap === null ? '—' : Math.round(gap) + ' ms'} round-trip · ${m.compute_ms} ms server compute`
+    + (live.gaps.length > 1 ? ` · median so far ${Math.round(live.gaps.slice().sort((a, b) => a - b)[Math.floor(live.gaps.length / 2)])} ms` : '');
+
+  const acousticOn = live.mode ? live.mode.acoustic_enabled : true;
+  setSignal('sigAcoustic', m.acoustic_score,
+    !acousticOn ? 'Not counted in this mode' : m.acoustic_score >= 0.6 ? 'Synthetic artefacts found' : m.acoustic_score >= 0.3 ? 'Some irregularity' : 'Sounds naturally human',
+    !acousticOn ? 'var(--muted)' : m.acoustic_score >= 0.3 ? 'var(--orange)' : 'var(--green)');
+  if (!acousticOn) $('sigAcoustic').classList.add('na');
+
+  const sig = $('sigSpeaker');
+  if (!live.enrolled) {
+    sig.classList.add('na'); sig.querySelector('.verdictline').textContent = 'Not checked'; sig.querySelector('.verdictline').style.color = 'var(--muted)';
+    sig.querySelector('.plain').textContent = live.sid ? `No voiceprint enrolled for "${live.sid}".` : 'No speaker ID given.';
+  } else {
+    setSignal('sigSpeaker', m.speaker_mismatch,
+      m.speaker_mismatch >= 0.65 ? `Does NOT match "${live.sid}"` : m.speaker_mismatch >= 0.35 ? `Uncertain match to "${live.sid}"` : `Matches "${live.sid}"`,
+      m.speaker_mismatch >= 0.35 ? 'var(--red)' : 'var(--green)');
+  }
+  setSignal('sigContext', m.context_score,
+    m.context_score >= 0.5 ? 'Several risk flags' : m.context_score > 0 ? 'Minor risk flags' : 'Nothing unusual',
+    m.context_score > 0 ? 'var(--amber)' : 'var(--green)');
+
+  if (alertNow) {
+    $('rec').className = 'rec alert';
+    $('rec').textContent = '⚠ Alert raised mid-call. Recommend secondary verification before any sensitive action.' + (m.audit_logged ? ' Written to the tamper-evident audit trail.' : '');
+    if (m.audit_logged && !live.audited) { live.audited = true; verifyAudit(); }
+  }
+  $('timeline').textContent +=
+    `${String(m.start_time).padStart(5)}s  ${m.risk_score.toFixed(2)}  ${m.level.padEnd(9)} ${m.acoustic_score.toFixed(2).padStart(7)}  ${m.speaker_mismatch.toFixed(2).padStart(7)}  ${m.context_score.toFixed(2).padStart(7)}  ${m.dominant_signal.padEnd(9)} ${gap === null ? '' : Math.round(gap) + 'ms'}${alertNow ? '   ← ALERT' : ''}\n`;
+}
+
+async function startLive() {
+  const sid = $('enrollId').value.trim();
+  if (!serverUp) { setStatus($('liveStatus'), 'Server is offline.', 'err'); return; }
+  if (!navigator.mediaDevices || !window.MediaRecorder) { setStatus($('liveStatus'), 'This browser cannot capture the microphone.', 'err'); return; }
+  setStatus($('liveStatus'), '');
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } }); }
+  catch (e) { setStatus($('liveStatus'), 'Microphone permission denied.', 'err'); return; }
+
+  const ws = new WebSocket(API.replace(/^http/, 'ws') + '/ws/live');
+  ws.binaryType = 'arraybuffer';
+  try { await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; }); }
+  catch { setStatus($('liveStatus'), 'Could not open the live connection to the server.', 'err'); stream.getTracks().forEach(t => t.stop()); return; }
+
+  Object.assign(live, { ws, stream, running: true, sid, n: 0, gaps: [], audited: false, pending: [] });
+  ws.send(JSON.stringify({
+    speaker_id: sid, caller_known: $('callerKnown').checked, off_hours: $('offHours').checked,
+    first_contact: $('firstContact').checked, transcript: $('transcript').value,
+  }));
+  ws.onmessage = e => {
+    const m = JSON.parse(e.data);
+    if (m.type === 'ready') {
+      live.enrolled = m.speaker_enrolled; live.mode = m.detection_mode;
+      showLiveShell(m.detection_mode);
+      if (!sid) setStatus($('liveStatus'), 'No speaker ID: the speaker check is off for this call. Enter one in step 1 to enable it.', 'err');
+      else if (!m.speaker_enrolled) setStatus($('liveStatus'), `"${sid}" is not enrolled — the speaker check is off for this call. Enrol a reference in step 1.`, 'err');
+      else setStatus($('liveStatus'), `Speaker check active against "${sid}".`, 'ok');
+    } else if (m.type === 'chunk') {
+      renderLiveChunk(m, live.pending.shift());
+      liveState(`live · ${m.index + 1} window${m.index ? 's' : ''} scored`, true);
+    } else if (m.type === 'summary') {
+      render(m);
+      $('liveLatency').hidden = live.gaps.length === 0;
+      liveState(`ended · ${m.timeline.length} windows · ${m.final_level}`, false);
+    } else if (m.type === 'error') {
+      live.pending.shift();
+      setStatus($('liveStatus'), 'Server rejected a window: ' + m.detail, 'err');
+    }
+  };
+  ws.onclose = () => { if (live.running) stopLive(); };
+
+  $('liveStart').disabled = true; $('liveStop').disabled = false;
+  liveState('live · capturing first window…', true);
+
+  // capture loop: start the next segment immediately, convert+send the previous one in the background
+  (async () => {
+    while (live.running) {
+      let blob;
+      try { blob = await recordSegment(live.stream, CHUNK_MS); } catch (e) { setStatus($('liveStatus'), 'Recording failed: ' + e, 'err'); break; }
+      if (!live.running) break;
+      blobToWav16k(blob).then(buf => {
+        if (live.ws && live.ws.readyState === 1) { live.pending.push(performance.now()); live.ws.send(buf); }
+      }).catch(e => setStatus($('liveStatus'), 'Could not decode a segment: ' + e, 'err'));
+    }
+  })();
+}
+
+function stopLive() {
+  live.running = false;
+  if (live.stream) live.stream.getTracks().forEach(t => t.stop());
+  if (live.ws && live.ws.readyState === 1) {
+    try { live.ws.send(JSON.stringify({ type: 'stop' })); } catch {}
+    setTimeout(() => { try { live.ws.close(); } catch {} }, 1500);
+  }
+  $('liveStart').disabled = false; $('liveStop').disabled = true;
+  liveState('stopping…', false);
+}
+
+$('liveStart').onclick = startLive;
+$('liveStop').onclick = stopLive;
 
 /* ---------- audit ---------- */
 async function verifyAudit() {

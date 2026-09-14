@@ -63,7 +63,7 @@ uvicorn src.api:app --reload --port 8000
 # then open web/index.html in a browser:
 #  1. (optional) enroll a reference voice for a speaker_id
 #  2. (optional) fill in call-context flags
-#  3. upload the call recording and analyze
+#  3. either "Live call (microphone)" and start talking, or upload a recording
 ```
 
 No-internet sanity check (proves the whole fused pipeline — acoustic +
@@ -81,7 +81,7 @@ pip install -r requirements-dev.txt
 pytest -q
 ```
 
-113 tests. The suite is built around the bugs that actually shipped, so
+119 tests. The suite is built around the bugs that actually shipped, so
 each of these would fail if the bug came back:
 
 | test file | pins |
@@ -95,6 +95,7 @@ each of these would fail if the bug came back:
 | `test_api.py` | error paths return 4xx with a readable message, never a 500 |
 | `test_transformer_backend.py` | wav2vec2 backend on both fixture sets, cross- and in-domain reported separately |
 | `test_fused_modes.py` | full fused pipeline per mode: zero FP in both; targeted-clone recall floor in transformer mode; heuristic acoustic weight is exactly zero |
+| `test_live_ws.py` | `/ws/live` answers each window before the next is sent, one risk engine carries across windows, an alert is audited the instant it fires, and live and batch paths score identically |
 
 ## The three signals, in more detail
 
@@ -165,6 +166,39 @@ Hyperledger Fabric) shared across a bank's nodes, so no single admin
 can unilaterally rewrite the fraud-alert history. Say exactly this to
 judges — it shows you understand what blockchain actually buys you,
 instead of just namedropping it.
+
+## Two ways to feed audio in: live call vs upload
+
+| | **Live call (microphone)** | **Upload a recording** |
+|---|---|---|
+| path | `WS /ws/live` | `POST /analyze` |
+| what it is | the true real-time path — the thing the PS asks for | batch analysis of a file; useful for testing against the fixture sets |
+| audio in | browser captures the mic in 5 s segments (`getUserMedia` + `MediaRecorder`), decodes each in-page to 16 kHz WAV and sends it the moment it is recorded | whole file, split into 5 s windows server-side |
+| scoring | each window scored on arrival, result pushed back immediately; **one `RiskEngine` for the whole call**, so EMA and the 2-window sustain rule carry across windows | same code — both paths call `api._score_chunk()`, and `tests/test_live_ws.py` asserts they agree |
+| audit | written the instant an alert first fires (a live call may never "end") | written once at the end if an alert fired |
+| measured latency | **0.29–0.35 s** from a window leaving the client to its result arriving, flat across a call (transformer, laptop CPU) | n/a |
+
+The latency number is measured, not claimed. `scripts/live_latency_probe.py`
+feeds a running server one 5 s window every 5 s with a real
+`time.sleep` between them and logs, per window, when it was sent and
+when its result came back:
+
+```
+   #   t_send  t_result   GAP s compute_ms   risk level     alert
+   0     2.03      2.38   0.351      342.7  0.002 LOW       -
+   1     7.38      7.68   0.296      285.8  0.158 LOW       -
+   2    12.68     12.99   0.313      302.4  0.260 MEDIUM    -
+   3    17.99     18.30   0.309      302.0  0.326 MEDIUM    -
+   4    23.30     23.59   0.292      285.1  0.367 MEDIUM    -
+   5    28.59     28.91   0.319      310.5  0.275 MEDIUM    -
+  chunk-arrival-to-result gap: min 0.292s  median 0.313s  max 0.351s
+  drift first->last chunk: -0.032s  ->  FLAT: streaming
+```
+
+A batching server would show that gap growing toward 30 s by the last
+window. Run it with `--clone` to stream a targeted clone of the enrolled
+speaker instead: the alert fires on window 1 (7.7 s into the call) and
+the audit record is written in the same instant.
 
 ## Two detection modes — they are not equivalent
 
@@ -267,6 +301,18 @@ before your submission video:
   with a free TTS/voice-clone tool.
 
 ## Judges Q&A prep
+
+**"Is this actually real-time, or does it analyse a recording afterwards?"**
+Both, and the live one is the real system. `POST /analyze` takes a
+recording and is what we test fixture files against. `WS /ws/live`
+takes the call as it happens: the dashboard's "Live call (microphone)"
+mode captures 5-second segments and each one is scored the moment it
+arrives — the gauge moves while the caller is still talking. Measured
+window-to-result latency is 0.29–0.35 s and stays flat for the whole
+call (`scripts/live_latency_probe.py` prints the per-window timestamps).
+On a clone of the enrolled speaker the alert fires at the second window,
+under 8 seconds into the call, and the audit record is written at that
+moment, not when the call ends.
 
 **"How will you actually listen to the calls?"**
 This targets enterprise call centers, banks, and government
