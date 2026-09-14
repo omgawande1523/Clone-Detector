@@ -148,7 +148,11 @@
       <h1>Voice authenticity monitor</h1>
       <p class="tagline">Flags AI-cloned voices mid-call by fusing three independent checks — before money moves.</p>
     </div>
-    <div id="serverPill" class="pill">checking server…</div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <label class="pill" style="cursor:pointer;display:inline-flex;gap:6px;align-items:center"><input type="checkbox" id="soundToggle" checked style="margin:0"> alert sound</label>
+      <button id="soundTest" class="ghost" style="margin:0;padding:5px 10px;font-size:12px">Test alert sound</button>
+      <div id="serverPill" class="pill">checking server…</div>
+    </div>
   </header>
 
   <div id="modeBanner"><b id="modeLabel"></b><span id="modeDesc"></span><div class="w" id="modeWeights"></div></div>
@@ -441,6 +445,7 @@ $('enrollBtn').onclick = async () => {
 
 /* ---------- analyse ---------- */
 $('analyzeBtn').onclick = async () => {
+  resumeAudio();
   const btn = $('analyzeBtn'); btn.disabled = true;
   $('verdict').classList.remove('show');
 
@@ -470,6 +475,7 @@ function pct(x) { return Math.round(x * 100) + '%'; }
 function render(d) {
   if (d.type !== 'summary') $('liveLatency').hidden = true;
   showCapability(d);
+  if (d.type !== 'summary' && d.alert_triggered) playAlertSound('critical');
   const alert = d.alert_triggered;
   const level = d.final_level;
   const colour = LEVEL_COLOR[level] || 'var(--green)';
@@ -593,6 +599,69 @@ function escapeHtml(s) {
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+/* ---------- audible alert (Web Audio, no assets) ----------
+   Fires on TRANSITION only, never per window: see levelTransitionSound().
+   Sound is an addition to the visual alert, never the only channel. */
+const LEVEL_ORDER = { LOW: 0, MEDIUM: 1, HIGH: 2, CRITICAL: 3 };
+const sound = { enabled: true, ac: null };
+try { const v = localStorage.getItem('sih_alert_sound'); if (v !== null) sound.enabled = v === '1'; } catch (e) { /* storage may throw */ }
+
+function audioCtx() {
+  if (live.ac) return live.ac;                       // reuse the live-call context when present
+  if (!sound.ac) sound.ac = new (window.AudioContext || window.webkitAudioContext)();
+  return sound.ac;
+}
+function resumeAudio() {                             // must be called from a user gesture
+  try { const ac = audioCtx(); if (ac.state === 'suspended') ac.resume().catch(() => {}); } catch (e) { /* no audio: fine */ }
+}
+/* one tone with a ramped envelope (no click), modest peak gain for venue speakers */
+function tone(ac, freq, t0, dur, peak) {
+  const osc = ac.createOscillator(), g = ac.createGain();
+  osc.type = 'sine'; osc.frequency.value = freq;
+  g.gain.setValueAtTime(0.0001, t0);
+  g.gain.exponentialRampToValueAtTime(peak, t0 + 0.006);          // ~6 ms attack
+  g.gain.setValueAtTime(peak, t0 + dur - 0.012);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);          // ~12 ms release
+  osc.connect(g).connect(ac.destination);
+  osc.start(t0); osc.stop(t0 + dur + 0.01);
+}
+function playAlertSound(kind) {
+  if (!sound.enabled) return;
+  try {
+    const ac = audioCtx();
+    if (ac.state === 'suspended') ac.resume().catch(() => {});
+    const t = ac.currentTime + 0.02;
+    if (kind === 'critical') {                       // faster triple beep, higher pitch
+      [0, 0.16, 0.32].forEach(dt => tone(ac, 1175, t + dt, 0.11, 0.15));
+    } else {                                          // double beep
+      [0, 0.22].forEach(dt => tone(ac, 880, t + dt, 0.15, 0.15));
+    }
+  } catch (e) { /* audio failure must never break rendering */ }
+}
+/* Transition guard. alertFloor = highest level reached since the level was last
+   below HIGH. A sound plays only when the level rises ABOVE that floor into HIGH
+   or CRITICAL; re-entering the same level after a dip that stayed >= HIGH is silent;
+   dropping below HIGH re-arms it. */
+function levelTransitionSound(state, level) {
+  const cur = LEVEL_ORDER[level] ?? 0;
+  if (cur < LEVEL_ORDER.HIGH) { state.alertFloor = 'LOW'; state.prevLevel = level; return; }
+  const floor = LEVEL_ORDER[state.alertFloor || 'LOW'];
+  if (cur > floor) playAlertSound(level === 'CRITICAL' ? 'critical' : 'high');
+  if (cur > floor) state.alertFloor = level;
+  state.prevLevel = level;
+}
+$('soundToggle').checked = sound.enabled;
+$('soundToggle').onchange = e => {
+  sound.enabled = e.target.checked;
+  try { localStorage.setItem('sih_alert_sound', sound.enabled ? '1' : '0'); } catch (err) { /* ignore */ }
+};
+$('soundTest').onclick = () => {
+  resumeAudio();
+  const was = sound.enabled; sound.enabled = true;
+  playAlertSound('high'); setTimeout(() => playAlertSound('critical'), 700);
+  setTimeout(() => { sound.enabled = was; }, 1200);
+};
+
 /* ---------- live call (microphone -> /ws/live) ---------- */
 const CHUNK_MS = 5000;
 const live = { ws: null, stream: null, running: false, ac: null, enrolled: false, sid: '', n: 0, gaps: [] };
@@ -662,6 +731,9 @@ function showLiveShell(mode) {
 function renderLiveChunk(m, tSent) {
   const colour = LEVEL_COLOR[m.level] || 'var(--green)';
   const alertNow = m.alert;
+  // sound: on level transition only (guarded), and once when the sustained alert first fires
+  levelTransitionSound(live, m.level);
+  if (alertNow && !live.alertSounded) { live.alertSounded = true; playAlertSound('critical'); }
   const v = $('verdict');
   v.className = 'card show ' + (alertNow ? 'alert' : m.level === 'HIGH' || m.level === 'CRITICAL' ? 'alert' : 'genuine');
   v.querySelector('.dot').style.background = colour;
@@ -707,6 +779,7 @@ function renderLiveChunk(m, tSent) {
 }
 
 async function startLive() {
+  resumeAudio();
   const sid = $('enrollId').value.trim();
   if (!serverUp) { setStatus($('liveStatus'), 'Server is offline.', 'err'); return; }
   if (!navigator.mediaDevices || !window.MediaRecorder) { setStatus($('liveStatus'), 'This browser cannot capture the microphone.', 'err'); return; }
@@ -724,7 +797,8 @@ async function startLive() {
   try { await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; }); }
   catch { setStatus($('liveStatus'), 'Could not open the live connection to the server.', 'err'); stream.getTracks().forEach(t => t.stop()); return; }
 
-  Object.assign(live, { ws, stream, running: true, sid, n: 0, gaps: [], audited: false, pending: [] });
+  Object.assign(live, { ws, stream, running: true, sid, n: 0, gaps: [], audited: false, pending: [],
+                        prevLevel: 'LOW', alertFloor: 'LOW', alertSounded: false });
   // report what the browser ACTUALLY applied, not what we asked for
   const st = stream.getAudioTracks()[0].getSettings();
   live.settings = st;

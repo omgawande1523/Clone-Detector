@@ -81,7 +81,7 @@ pip install -r requirements-dev.txt
 pytest -q
 ```
 
-159 tests. The suite is built around the bugs that actually shipped, so
+168 tests. The suite is built around the bugs that actually shipped, so
 each of these would fail if the bug came back:
 
 | test file | pins |
@@ -95,6 +95,7 @@ each of these would fail if the bug came back:
 | `test_api.py` | error paths return 4xx with a readable message, never a 500 |
 | `test_transformer_backend.py` | wav2vec2 backend on both fixture sets, cross- and in-domain reported separately |
 | `test_fused_modes.py` | full fused pipeline per mode: zero FP in both; targeted-clone recall floor in transformer mode; heuristic acoustic weight is exactly zero |
+| `test_web_alert_sound.py` | static smoke check: the dashboard beep is transition-guarded, try/catch-wrapped, and never fired per window |
 | `test_enroll_auth.py` | with ENROLL_TOKEN set, /enroll needs the header (401 otherwise); unset is open and /health says so; a re-enrolment is hash-chained |
 | `test_label_mapping.py` | the spoof class is resolved once from id2label or an explicit override, and ambiguous labels raise instead of guessing |
 | `test_resampling.py` | one anti-aliased resampler everywhere: a >8 kHz tone does not alias into band; a 48 kHz round trip keeps its verdict |
@@ -216,7 +217,15 @@ detected", which read as one. Every verdict now also carries
 three-way `verdict_state`: `sustained_alert` / `peaked_unsustained` /
 `clear`. The peaked-but-not-sustained wording names the peak value and
 recommends caution; it never says "no signal". The dashboard headline
-follows the same split (`tests/test_risk_engine_consistency.py`). Run it with `--clone` to stream a targeted clone of the enrolled
+follows the same split (`tests/test_risk_engine_consistency.py`).
+
+**Audible alert.** The dashboard plays a double beep (880 Hz) when the
+level first rises into HIGH and a faster triple beep (1175 Hz) into
+CRITICAL, plus the CRITICAL pattern once when the sustained alert
+fires — on *transitions only*, never per window, and re-armed only
+after the level drops below HIGH. Web Audio, no assets; toggle and
+"Test alert sound" in the header; the visual alert is always the
+primary channel. Run it with `--clone` to stream a targeted clone of the enrolled
 speaker instead: the alert fires on window 1 (7.7 s into the call) and
 the audit record is written in the same instant.
 
