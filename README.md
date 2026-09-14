@@ -81,7 +81,7 @@ pip install -r requirements-dev.txt
 pytest -q
 ```
 
-119 tests. The suite is built around the bugs that actually shipped, so
+127 tests. The suite is built around the bugs that actually shipped, so
 each of these would fail if the bug came back:
 
 | test file | pins |
@@ -95,6 +95,7 @@ each of these would fail if the bug came back:
 | `test_api.py` | error paths return 4xx with a readable message, never a 500 |
 | `test_transformer_backend.py` | wav2vec2 backend on both fixture sets, cross- and in-domain reported separately |
 | `test_fused_modes.py` | full fused pipeline per mode: zero FP in both; targeted-clone recall floor in transformer mode; heuristic acoustic weight is exactly zero |
+| `test_alert_capability.py` | heuristic mode with no enrolment can never alert and must say so in /health, /analyze and the live ready message |
 | `test_live_ws.py` | `/ws/live` answers each window before the next is sent, one risk engine carries across windows, an alert is audited the instant it fires, and live and batch paths score identically |
 
 ## The three signals, in more detail
@@ -215,6 +216,17 @@ UI say which mode produced the result.
 | defence against a **clone of the enrolled speaker** | yes — acoustic layer: 8/12 ASVspoof clones, 7/7 In-the-Wild clones reach HIGH+ | **none** — 0/12 ASVspoof clones; the clone passes the voiceprint (median mismatch 0.04) and nothing else can fire |
 | false positives on genuine multi-speaker calls | 0/16 utterances, 0/8 calls (ASVspoof); 0/7 (In-the-Wild) | 0/16, 0/8; 0/7 |
 | what it is | **the real system** | an offline fallback with a structurally reduced capability |
+
+**A call that cannot alert says so.** In heuristic mode with no
+voiceprint enrolled the highest reachable fused score is 0.10 against
+an alert threshold of 0.40 — the call is structurally incapable of
+alerting. `fusion.reachable_max()` computes this from runtime state
+(not weight capacity), `/health` reports it for both the enrolled and
+unenrolled case under `live_capability`, every `/analyze` response and
+live `ready` message carries `can_ever_alert` plus a plain-English
+`capability_warning`, and the dashboard shows it as a red banner above
+the verdict. It is not possible to run a demo in that state without
+seeing it (`tests/test_alert_capability.py`).
 
 **Heuristic-only mode must not be presented or deployed as equivalent
 to transformer mode.** This is not "a bit less accurate": in that

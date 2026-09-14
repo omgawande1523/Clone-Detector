@@ -160,6 +160,48 @@ def fuse(acoustic_score: float, speaker_mismatch: float, context_score: float,
     }
 
 
+def reachable_max(weights: FusionWeights, speaker_enrolled: bool,
+                  alert_threshold: float = None) -> dict:
+    """The highest fused score ACTUALLY attainable on a call, given
+    whether a voiceprint exists to compare against.
+
+    check_alertable() reports weight capacity; this reports runtime
+    state. The difference matters: in heuristic mode (acoustic 0.00 /
+    speaker 0.90 / context 0.10) with nobody enrolled, mismatch_score()
+    returns a neutral 0.0 for every window, so the most the call can
+    ever score is 0.10 — a quarter of the alert threshold. Such a call
+    is silently incapable of alerting, and before this function nothing
+    told the operator. /health, /analyze and the live ready message all
+    surface it now.
+    """
+    if alert_threshold is None:
+        from .risk_engine import ALERT_THRESHOLD   # local import: risk_engine does not import fusion
+        alert_threshold = ALERT_THRESHOLD
+    max_fused = weights.acoustic * 1.0 + (weights.speaker * 1.0 if speaker_enrolled else 0.0) + weights.context * 1.0
+    max_fused = float(min(max_fused, 1.0))
+    return {
+        "speaker_enrolled": bool(speaker_enrolled),
+        "max_fused": round(max_fused, 4),
+        "alert_threshold": alert_threshold,
+        "can_ever_alert": max_fused >= alert_threshold,
+    }
+
+
+def capability_warning(backend: str, weights: FusionWeights, speaker_enrolled: bool) -> str:
+    """Plain-English warning when reachable_max() says a call cannot
+    alert, or None when it can."""
+    cap = reachable_max(weights, speaker_enrolled)
+    if cap["can_ever_alert"]:
+        return None
+    fix = ("enrol a voiceprint for this speaker (step 1 in the dashboard, or POST /enroll)"
+           if not speaker_enrolled else "")
+    if backend != "transformer":
+        fix = (fix + ", or " if fix else "") + "run the server with DETECTOR_BACKEND=transformer"
+    return (f"This call CANNOT raise an alert in the current configuration: the highest risk score "
+            f"it can reach is {cap['max_fused']:.2f}, below the alert threshold of {cap['alert_threshold']:.2f} "
+            f"({backend} mode, {'no ' if not speaker_enrolled else ''}voiceprint enrolled). To fix: {fix}.")
+
+
 def check_alertable(alert_threshold: float,
                     weights: FusionWeights = TRANSFORMER_WEIGHTS) -> dict:
     """Reports whether each signal can reach the alert threshold on its

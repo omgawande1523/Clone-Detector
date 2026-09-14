@@ -58,7 +58,8 @@ from .risk_engine import RiskEngine, ALERT_THRESHOLD
 from .detector import get_detector
 from .speaker_consistency import VoiceprintStore
 from .context_engine import score_context
-from .fusion import fuse, check_alertable, weights_for_backend, detection_mode
+from .fusion import (fuse, check_alertable, weights_for_backend, detection_mode,
+                     reachable_max, capability_warning)
 from .audit_log import AuditLog
 
 # Upload caps. 16 kHz mono 16-bit PCM is ~32 KB/s, so 50 MB is roughly
@@ -149,6 +150,13 @@ def health():
         "detection_mode": _mode,
         "alert_threshold": ALERT_THRESHOLD,
         "fusion_check": check_alertable(ALERT_THRESHOLD, _weights),
+        # Runtime capability, not weight capacity: can a call alert at
+        # all in this mode, with and without an enrolled voiceprint?
+        "live_capability": {
+            "enrolled": reachable_max(_weights, True),
+            "unenrolled": reachable_max(_weights, False),
+            "enrolled_speakers": sorted(_voiceprints._data.keys()),
+        },
     }
 
 
@@ -208,12 +216,22 @@ def _audit_alert(speaker_id, verdict, ctx):
     })
 
 
+def _capability(speaker_enrolled):
+    cap = reachable_max(_weights, speaker_enrolled)
+    return {
+        "can_ever_alert": cap["can_ever_alert"],
+        "max_reachable_score": cap["max_fused"],
+        "capability_warning": capability_warning(_detector.backend, _weights, speaker_enrolled),
+    }
+
+
 def _verdict_payload(speaker_id, speaker_enrolled, ctx, timeline, verdict):
     return {
         "backend": _detector.name,
         "detection_mode": _mode,
         "speaker_id": speaker_id,
         "speaker_enrolled": speaker_enrolled,
+        **_capability(speaker_enrolled),
         "context_reasons": ctx["reasons"],
         "timeline": timeline,
         "final_risk_score": verdict["peak_risk_score"],
@@ -358,6 +376,7 @@ async def ws_live(ws: WebSocket):
         "detection_mode": _mode,
         "speaker_id": speaker_id,
         "speaker_enrolled": speaker_enrolled,
+        **_capability(speaker_enrolled),
         "context_reasons": ctx["reasons"],
         "chunk_seconds": DEFAULT_CHUNK_SECONDS,
     })

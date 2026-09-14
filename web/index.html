@@ -123,6 +123,11 @@
   .mode-tabs button { margin: 0; padding: 7px 14px; font-size: 13px; }
   .mode-tabs button.off { background: transparent; color: var(--muted); border: 1px solid var(--line); }
 
+  /* cannot-alert banner: same weight as the reduced-posture banner */
+  #capBanner { display: none; margin-top: 14px; padding: 11px 15px; border-radius: 9px; font-size: 13.5px; border: 2px solid var(--red); background: var(--red-bg); color: #991b1b; }
+  #capBanner.show { display: block; }
+  #capBanner b { display: block; margin-bottom: 2px; font-size: 14px; }
+
   /* detection-mode banner: a judge must never be unsure which mode produced a result */
   #modeBanner { display: none; margin-top: 14px; padding: 11px 15px; border-radius: 9px; font-size: 13.5px; border: 1px solid; }
   #modeBanner.show { display: block; }
@@ -211,6 +216,8 @@
     </div>
   </div>
 
+  <div id="capBanner"><b>⛔ This call cannot raise an alert</b><span id="capText"></span></div>
+
   <!-- VERDICT -->
   <div id="verdict" class="card">
     <div class="headline"><span class="dot"></span><span id="headlineText"></span><span id="verdictMode" class="modetag"></span></div>
@@ -290,6 +297,13 @@ async function checkHealth() {
     $('serverPill').textContent = `server online · ${d.detection_mode ? d.detection_mode.mode : d.backend}`;
     $('serverDown').classList.remove('show');
     showMode(d.detection_mode);
+    // before any call: if an unenrolled call can never alert in this mode, say so now
+    if (d.live_capability && !d.live_capability.unenrolled.can_ever_alert) {
+      showCapability({ can_ever_alert: false, capability_warning:
+        `In ${d.detection_mode.mode} mode a call with no enrolled voiceprint can reach at most `
+        + `${d.live_capability.unenrolled.max_fused.toFixed(2)} of the ${d.alert_threshold.toFixed(2)} alert threshold. `
+        + `Enrol a voiceprint in step 1 and use that speaker ID, or run the server with DETECTOR_BACKEND=transformer.` });
+    }
   } catch {
     serverUp = false;
     $('serverPill').className = 'pill bad';
@@ -297,6 +311,17 @@ async function checkHealth() {
     $('serverDown').classList.add('show');
   }
   syncButtons();
+}
+
+function showCapability(d) {
+  const b = $('capBanner');
+  if (d && d.can_ever_alert === false) {
+    $('capText').textContent = d.capability_warning || 'The maximum reachable risk score is below the alert threshold.';
+    b.classList.add('show');
+    b.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  } else {
+    b.classList.remove('show');
+  }
 }
 
 function showMode(m) {
@@ -440,6 +465,7 @@ function pct(x) { return Math.round(x * 100) + '%'; }
 
 function render(d) {
   if (d.type !== 'summary') $('liveLatency').hidden = true;
+  showCapability(d);
   const alert = d.alert_triggered;
   const level = d.final_level;
   const colour = LEVEL_COLOR[level] || 'var(--green)';
@@ -704,6 +730,7 @@ async function startLive() {
     if (m.type === 'ready') {
       live.enrolled = m.speaker_enrolled; live.mode = m.detection_mode;
       showLiveShell(m.detection_mode);
+      showCapability(m);
       if (!sid) setStatus($('liveStatus'), 'No speaker ID: the speaker check is off for this call. Enter one in step 1 to enable it.', 'err');
       else if (!m.speaker_enrolled) setStatus($('liveStatus'), `"${sid}" is not enrolled — the speaker check is off for this call. Enrol a reference in step 1.`, 'err');
       else setStatus($('liveStatus'), `Speaker check active against "${sid}".`, 'ok');
