@@ -677,7 +677,11 @@ async function startLive() {
   if (!navigator.mediaDevices || !window.MediaRecorder) { setStatus($('liveStatus'), 'This browser cannot capture the microphone.', 'err'); return; }
   setStatus($('liveStatus'), '');
   let stream;
-  try { stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } }); }
+  // ALL browser audio processing off. Chromium's AGC / noise suppression /
+  // echo cancellation measurably alter the signal (AGC alone drove a 0.51-peak
+  // clip to 1.00 with clipping); the detector must see the microphone, not a
+  // processed version of it.
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: false } }); }
   catch (e) { setStatus($('liveStatus'), 'Microphone permission denied.', 'err'); return; }
 
   const ws = new WebSocket(API.replace(/^http/, 'ws') + '/ws/live');
@@ -686,6 +690,11 @@ async function startLive() {
   catch { setStatus($('liveStatus'), 'Could not open the live connection to the server.', 'err'); stream.getTracks().forEach(t => t.stop()); return; }
 
   Object.assign(live, { ws, stream, running: true, sid, n: 0, gaps: [], audited: false, pending: [] });
+  // report what the browser ACTUALLY applied, not what we asked for
+  const st = stream.getAudioTracks()[0].getSettings();
+  live.settings = st;
+  const proc = ['echoCancellation', 'noiseSuppression', 'autoGainControl'].filter(k => st[k]);
+  liveState(`mic ${st.sampleRate || '?'} Hz · processing: ${proc.length ? proc.join(', ') + ' ON' : 'all off'}`, true);
   ws.send(JSON.stringify({
     speaker_id: sid, caller_known: $('callerKnown').checked, off_hours: $('offHours').checked,
     first_contact: $('firstContact').checked, transcript: $('transcript').value,
@@ -700,7 +709,8 @@ async function startLive() {
       else setStatus($('liveStatus'), `Speaker check active against "${sid}".`, 'ok');
     } else if (m.type === 'chunk') {
       renderLiveChunk(m, live.pending.shift());
-      liveState(`live · ${m.index + 1} window${m.index ? 's' : ''} scored`, true);
+      const st = live.settings || {}; const proc = ['echoCancellation', 'noiseSuppression', 'autoGainControl'].filter(k => st[k]);
+      liveState(`live · ${m.index + 1} window${m.index ? 's' : ''} scored · processing ${proc.length ? proc.join('/') + ' ON' : 'off'}`, true);
     } else if (m.type === 'summary') {
       render(m);
       $('liveLatency').hidden = live.gaps.length === 0;
