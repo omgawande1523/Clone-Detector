@@ -81,7 +81,7 @@ pip install -r requirements-dev.txt
 pytest -q
 ```
 
-90 tests. The suite is built around the bugs that actually shipped, so
+97 tests. The suite is built around the bugs that actually shipped, so
 each of these would fail if the bug came back:
 
 | test file | pins |
@@ -93,6 +93,7 @@ each of these would fail if the bug came back:
 | `test_false_positive_rate_asvspoof.py` | full fused pipeline on 8 real speakers' genuine calls: none may reach HIGH/CRITICAL |
 | `test_context_and_risk.py` | word-boundary keyword matching; peak risk reported, not the trailing EMA |
 | `test_api.py` | error paths return 4xx with a readable message, never a 500 |
+| `test_transformer_backend.py` | wav2vec2 backend on both fixture sets, cross- and in-domain reported separately |
 
 ## The three signals, in more detail
 
@@ -163,6 +164,30 @@ Hyperledger Fabric) shared across a bank's nodes, so no single admin
 can unilaterally rewrite the fraud-alert history. Say exactly this to
 judges — it shows you understand what blockchain actually buys you,
 instead of just namedropping it.
+
+## Measured accuracy of the two acoustic backends
+
+Both backends, both committed fixture sets, same threshold (0.5).
+`fixtures/asvspoof2019/` is cross-domain for the transformer model;
+`fixtures/in_the_wild/` is its own fine-tuning distribution (split
+unknown, so treat it as an upper bound). The two are reported
+separately on purpose — spoof detection is known to generalise poorly
+across attack types, and one averaged number would hide that.
+
+| backend | dataset | n (bona/spoof) | bonafide max | false-pos | spoof recall | AUC |
+|---|---|---|---|---|---|---|
+| heuristic | ASVspoof 2019 LA (cross-domain) | 48 / 12 | 0.000 | 0% | **0%** | 0.25 |
+| heuristic | In-the-Wild (in-domain) | 7 / 7 | 0.063 | 0% | **0%** | 0.14 |
+| transformer | ASVspoof 2019 LA (cross-domain) | 48 / 12 | 0.007 | 0% | **67%** | 0.81 |
+| transformer | In-the-Wild (in-domain) | 7 / 7 | 0.004 | 0% | **100%** | 1.00 |
+
+Transformer misses on ASVspoof are structured, not random: neural /
+vocoder TTS (A01–A03) is caught at >0.93 every time; waveform
+concatenation of real speech units (A04) is missed every time; the two
+voice-conversion systems (A05, A06) go 1-for-2 each. Cost: 378 MB
+download once, ~0.2–0.3 s per 3 s chunk on a laptop CPU.
+`tests/test_transformer_backend.py` re-measures this (skipped unless
+the weights are cached locally).
 
 ## Switching to the real ML model
 

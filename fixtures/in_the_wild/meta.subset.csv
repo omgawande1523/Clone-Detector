@@ -1,0 +1,15 @@
+file,speaker,label
+729.wav,Billie Eilish,bona-fide
+3376.wav,George W. Bush,bona-fide
+3381.wav,Kamala Harris,spoof
+9131.wav,William F. Buckley,spoof
+9532.wav,William F. Buckley,bona-fide
+9604.wav,Mark Zuckerberg,spoof
+9700.wav,Mark Zuckerberg,bona-fide
+13372.wav,JFK,bona-fide
+13836.wav,George W. Bush,spoof
+20514.wav,Milton Friedman,spoof
+24105.wav,Billie Eilish,spoof
+27536.wav,Kamala Harris,bona-fide
+31008.wav,Milton Friedman,bona-fide
+31530.wav,JFK,spoof
