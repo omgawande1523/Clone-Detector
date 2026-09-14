@@ -183,7 +183,7 @@ instead of just namedropping it.
 | audio in | browser captures the mic in 5 s segments (`getUserMedia` + `MediaRecorder`), decodes each in-page to 16 kHz WAV and sends it the moment it is recorded | whole file, split into 5 s windows server-side |
 | scoring | each window scored on arrival, result pushed back immediately; **one `RiskEngine` for the whole call**, so EMA and the 2-window sustain rule carry across windows | same code — both paths call `api._score_chunk()`, and `tests/test_live_ws.py` asserts they agree |
 | audit | written the instant an alert first fires (a live call may never "end") | written once at the end if an alert fired |
-| measured latency | **0.29–0.35 s** from a window leaving the client to its result arriving, flat across a call (transformer, laptop CPU) | n/a |
+| measured latency | **0.22–0.41 s typical, with intermittent windows at ~0.75 s** from a window leaving the client to its result arriving; never accumulating (transformer, laptop CPU — re-measured 2026-09-14 after the resampler change, three runs) | n/a |
 
 The latency number is measured, not claimed. `scripts/live_latency_probe.py`
 feeds a running server one 5 s window every 5 s with a real
@@ -203,7 +203,12 @@ when its result came back:
 ```
 
 A batching server would show that gap growing toward 30 s by the last
-window.
+window. Re-measured after the resampler change (three runs on the
+same laptop): typical gap 0.33–0.41 s, minimum 0.22 s, but two runs
+had two or three windows at 0.69–0.80 s — server-side compute variance
+(`compute_ms` moved with it), not transport, and never cumulative. The
+tighter 0.29–0.35 s band in the table above was one earlier run; quote
+the range, not the best case.
 
 **Level vs alert — they measure different things.** `final_level` is
 the level of the highest EMA the call reached and has *no* sustain
@@ -393,7 +398,8 @@ recording and is what we test fixture files against. `WS /ws/live`
 takes the call as it happens: the dashboard's "Live call (microphone)"
 mode captures 5-second segments and each one is scored the moment it
 arrives — the gauge moves while the caller is still talking. Measured
-window-to-result latency is 0.29–0.35 s and stays flat for the whole
+window-to-result latency is typically 0.3–0.4 s (up to ~0.75 s on
+some windows on a laptop CPU) and does not accumulate over the
 call (`scripts/live_latency_probe.py` prints the per-window timestamps).
 On a clone of the enrolled speaker the alert fires at the second window,
 under 8 seconds into the call, and the audit record is written at that
