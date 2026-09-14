@@ -760,7 +760,14 @@ function renderLiveChunk(m, tSent) {
   if (!live.enrolled) {
     sig.classList.add('na'); sig.querySelector('.verdictline').textContent = 'Not checked'; sig.querySelector('.verdictline').style.color = 'var(--muted)';
     sig.querySelector('.plain').textContent = live.sid ? `No voiceprint enrolled for "${live.sid}".` : 'No speaker ID given.';
+  } else if (m.speaker_scored === false) {
+    sig.classList.add('na');
+    sig.querySelector('.verdictline').textContent = m.speaker_carried ? 'Not assessed this window (carrying last result)' : 'Not assessed yet';
+    sig.querySelector('.verdictline').style.color = 'var(--muted)';
+    sig.querySelector('.plain').textContent = 'Too little speech in this window to compare against the enrolled voiceprint. The previous confident result is kept rather than treating silence as a match.';
+    sig.querySelector('.bar i').style.width = pct(m.speaker_mismatch); sig.querySelector('.bar i').style.background = 'var(--muted)';
   } else {
+    sig.classList.remove('na');
     setSignal('sigSpeaker', m.speaker_mismatch,
       m.speaker_mismatch >= 0.65 ? `Does NOT match "${live.sid}"` : m.speaker_mismatch >= 0.35 ? `Uncertain match to "${live.sid}"` : `Matches "${live.sid}"`,
       m.speaker_mismatch >= 0.35 ? 'var(--red)' : 'var(--green)');

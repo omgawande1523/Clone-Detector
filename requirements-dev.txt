@@ -1,5 +1,5 @@
-# Test suite
+# Test suite + measurement scripts. Pinned (pip freeze, 2026-09-14).
 -r requirements.txt
-pytest
-httpx
-websockets   # scripts/live_latency_probe.py
+pytest==9.1.1
+httpx==0.28.1
+websockets==17.1   # scripts/live_latency_probe.py

@@ -8,13 +8,10 @@ __pycache__/
 *.py[cod]
 *.pyc
 
-# runtime state, not source: voiceprints.json, audit_log.jsonl
-*.json
-*.jsonl
-
-# ...but keep project config that happens to be JSON
-!package.json
-!tsconfig.json
+# runtime state, not source -- named explicitly (a global *.json ignore
+# silently dropped fixtures in new directories and needed negations)
+/voiceprints.json
+/audit_log.jsonl
 
 # pytest / tooling
 .pytest_cache/
@@ -26,14 +23,11 @@ htmlcov/
 .idea/
 .DS_Store
 Thumbs.db
+# Office lock files
+~$*
 
-# raw ASVspoof download (fixtures/ holds the committed subset)
+# raw ASVspoof / In-the-Wild downloads (fixtures/ holds the committed subsets)
 data/
-!fixtures/**/*.json
-
-# raw In-the-Wild download (fixtures/ holds the committed subset)
-# (data/ already covers it; listed for clarity)
-!fixtures/**/*.csv
 
 # diagnostic raw-audio captures from /ws/live (LIVE_CAPTURE_DIR)
 live_capture/

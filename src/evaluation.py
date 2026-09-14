@@ -61,14 +61,14 @@ def run_call(wav, reference_print, detector, weights: FusionWeights, ctx_score=0
     (risk-engine summary, per-chunk rows, speaker_layer_had_an_opinion)."""
     engine = RiskEngine()
     rows, speaker_scored = [], False
+    last_mismatch = None       # carried forward on windows with no opinion, as api._score_chunk does
     for t, seg in _chunks(wav, chunk_s):
         acoustic = detector.predict_detailed(seg, SR)["spoof_prob"]
         live = compute_voiceprint(seg, SR) if reference_print is not None else None
         if live is not None:
             speaker_scored = True
-            mismatch = mismatch_between(reference_print, live)
-        else:
-            mismatch = 0.0
+            last_mismatch = mismatch_between(reference_print, live)
+        mismatch = last_mismatch if last_mismatch is not None else 0.0
         f = fuse(acoustic, mismatch, ctx_score, weights)
         r = engine.update(f["fused_score"])
         rows.append(dict(t=t, acoustic=acoustic, speaker=mismatch, context=ctx_score,

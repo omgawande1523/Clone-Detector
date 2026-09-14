@@ -232,14 +232,27 @@ async def enroll(speaker_id: str = Form(...), file: UploadFile = File(...),
     }
 
 
-def _score_chunk(waveform, sample_rate, start_time, speaker_id, speaker_enrolled, ctx, engine):
+def _score_chunk(waveform, sample_rate, start_time, speaker_id, speaker_enrolled, ctx, engine,
+                 call_state=None):
     """The one place a chunk is scored. Both /analyze (batch) and
-    /ws/live (streaming) call this, so the two paths cannot drift."""
+    /ws/live (streaming) call this, so the two paths cannot drift.
+
+    call_state is a per-call dict. When the speaker layer has no
+    opinion on a window (too little speech), the LAST CONFIDENT
+    mismatch for this call is carried forward rather than a neutral
+    0.0 — a quiet window must not read as "matches the enrolled
+    speaker" and pull the EMA down. speaker_scored says which.
+    """
+    if call_state is None:
+        call_state = {}
     acoustic = _detector.predict_detailed(waveform, sample_rate)
-    speaker_mismatch = (
-        _voiceprints.mismatch_score(speaker_id, waveform, sample_rate)
-        if speaker_enrolled else 0.0
-    )
+    speaker_scored = False
+    if speaker_enrolled:
+        live = _voiceprints.mismatch_score(speaker_id, waveform, sample_rate)
+        if live is not None:
+            speaker_scored = True
+            call_state["last_mismatch"] = live
+    speaker_mismatch = call_state.get("last_mismatch", 0.0)
     fused = fuse(acoustic["spoof_prob"], speaker_mismatch, ctx["context_score"], _weights)
     result = engine.update(fused["fused_score"])
     return {
@@ -248,6 +261,8 @@ def _score_chunk(waveform, sample_rate, start_time, speaker_id, speaker_enrolled
         **result,
         "acoustic_score": round(fused["acoustic_score"], 3),
         "speaker_mismatch": round(fused["speaker_mismatch"], 3),
+        "speaker_scored": speaker_scored,                       # False: not assessed this window, value carried
+        "speaker_carried": bool(speaker_enrolled and not speaker_scored and "last_mismatch" in call_state),
         "context_score": round(fused["context_score"], 3),
         "dominant_signal": fused["dominant_signal"],
     }
@@ -345,6 +360,7 @@ async def analyze(
         speaker_enrolled = bool(speaker_id and _voiceprints.has(speaker_id))
 
         engine = RiskEngine()
+        call_state = {}
         timeline = []
         # chunk_audio() decodes lazily, so a corrupt file raises on the
         # first iteration of this loop rather than at _save_upload time.
@@ -360,7 +376,7 @@ async def analyze(
 
         for chunk in chunks:
             timeline.append(_score_chunk(chunk.waveform, chunk.sample_rate, chunk.start_time,
-                                         speaker_id, speaker_enrolled, ctx, engine))
+                                         speaker_id, speaker_enrolled, ctx, engine, call_state))
     finally:
         os.remove(tmp_path)
 
@@ -436,6 +452,7 @@ async def ws_live(ws: WebSocket):
     )
     speaker_enrolled = bool(speaker_id and _voiceprints.has(speaker_id))
     engine = RiskEngine()               # ONE engine for the whole call
+    call_state = {}                     # carries the last confident speaker mismatch
     session_tag = time.strftime("%Y%m%d-%H%M%S") + f"-{speaker_id or 'nospeaker'}"
     timeline = []
     call_clock = 0.0
@@ -473,7 +490,7 @@ async def ws_live(ws: WebSocket):
                 # Scoring is CPU-bound (~0.2-0.4 s with the transformer);
                 # run it off the event loop so the socket stays responsive.
                 row = await run_in_threadpool(
-                    _score_chunk, waveform, sr, call_clock, speaker_id, speaker_enrolled, ctx, engine)
+                    _score_chunk, waveform, sr, call_clock, speaker_id, speaker_enrolled, ctx, engine, call_state)
                 call_clock += len(waveform) / sr
                 timeline.append(row)
                 _capture_live_chunk(session_tag, len(timeline) - 1, waveform, sr, row)

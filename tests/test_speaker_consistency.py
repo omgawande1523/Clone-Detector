@@ -92,8 +92,11 @@ def test_identical_audio_is_a_perfect_match():
 
 
 def test_unenrolled_speaker_stays_neutral(store):
-    """No reference on file must mean 'no opinion', never a penalty."""
-    assert store.mismatch_score("nobody_enrolled", *load_mono(GENUINE_A)) == 0.0
+    """No reference on file must mean 'no opinion', never a penalty.
+    That opinion is now an explicit None (it used to be 0.0, which was
+    indistinguishable from a confident match -- see
+    tests/test_quiet_window_carry_forward.py)."""
+    assert store.mismatch_score("nobody_enrolled", *load_mono(GENUINE_A)) is None
     assert store.similarity("nobody_enrolled", *load_mono(GENUINE_A)) is None
 
 

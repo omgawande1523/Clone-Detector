@@ -165,6 +165,7 @@ class VoiceprintStore:
 
     def __init__(self, path: str = None):
         self.path = path or self.DEFAULT_PATH
+        self._lock = threading.Lock()
         self._data = {}
         if os.path.exists(self.path):
             try:
@@ -182,9 +183,17 @@ class VoiceprintStore:
                 "Enrollment audio contains too little speech to build a "
                 "voiceprint — provide 10-20 seconds of clean speech."
             )
-        self._data[speaker_id] = voiceprint
-        with open(self.path, "w") as f:
-            json.dump(self._data, f)
+        # Read-modify-write under a lock (AuditLog already had one; this
+        # store did not), and an atomic replace so a crash mid-write
+        # cannot leave a truncated voiceprints.json behind.
+        with self._lock:
+            self._data[speaker_id] = voiceprint
+            tmp = f"{self.path}.{os.getpid()}.tmp"
+            with open(tmp, "w") as f:
+                json.dump(self._data, f)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, self.path)
 
     def has(self, speaker_id: str) -> bool:
         return speaker_id in self._data
@@ -199,12 +208,17 @@ class VoiceprintStore:
             return None
         return cosine_similarity(self._data[speaker_id], live_print)
 
-    def mismatch_score(self, speaker_id: str, wav: np.ndarray, sr: int) -> float:
+    def mismatch_score(self, speaker_id: str, wav: np.ndarray, sr: int):
         """Returns a RISK score in [0, 1] — 0 means the voice matches
-        the enrolled speaker well, 1 means it is very unlike them.
+        the enrolled speaker well, 1 means it is very unlike them — or
+        None when there is genuinely no opinion: no reference on file,
+        or fewer than MIN_SPEECH_SECONDS of speech in the window.
 
-        Returns 0.0 (neutral) when there is no reference on file or the
-        chunk holds too little speech: the system degrades to "no
-        opinion" rather than penalising a caller it cannot assess.
+        None used to be returned as 0.0, which is indistinguishable from
+        "confidently the enrolled speaker". A clone that pauses a lot
+        got a free pass on every quiet window and dragged the EMA down.
+        Callers must treat None as "not assessed" — api._score_chunk
+        carries the last confident value forward within a call.
         """
-        return mismatch_from_similarity(self.similarity(speaker_id, wav, sr))
+        sim = self.similarity(speaker_id, wav, sr)
+        return None if sim is None else mismatch_from_similarity(sim)

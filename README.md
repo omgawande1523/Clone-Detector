@@ -81,7 +81,7 @@ pip install -r requirements-dev.txt
 pytest -q
 ```
 
-168 tests. The suite is built around the bugs that actually shipped, so
+175 tests. The suite is built around the bugs that actually shipped, so
 each of these would fail if the bug came back:
 
 | test file | pins |
@@ -95,6 +95,7 @@ each of these would fail if the bug came back:
 | `test_api.py` | error paths return 4xx with a readable message, never a 500 |
 | `test_transformer_backend.py` | wav2vec2 backend on both fixture sets, cross- and in-domain reported separately |
 | `test_fused_modes.py` | full fused pipeline per mode: zero FP in both; targeted-clone recall floor in transformer mode; heuristic acoustic weight is exactly zero |
+| `test_quiet_window_carry_forward.py` | a near-silent window after a high-mismatch window carries the mismatch forward and is flagged not-assessed; the store is locked and writes atomically |
 | `test_web_alert_sound.py` | static smoke check: the dashboard beep is transition-guarded, try/catch-wrapped, and never fired per window |
 | `test_enroll_auth.py` | with ENROLL_TOKEN set, /enroll needs the header (401 otherwise); unset is open and /health says so; a re-enrolment is hash-chained |
 | `test_label_mapping.py` | the spoof class is resolved once from id2label or an explicit override, and ambiguous labels raise instead of guessing |
@@ -219,6 +220,17 @@ three-way `verdict_state`: `sustained_alert` / `peaked_unsustained` /
 recommends caution; it never says "no signal". The dashboard headline
 follows the same split (`tests/test_risk_engine_consistency.py`).
 
+**Quiet windows are "not assessed", not "a match".** Below
+`MIN_SPEECH_SECONDS` (1.5 s) of post-VAD speech the speaker layer
+returns no opinion (`None`). It used to return 0.0 — indistinguishable
+from "confidently the enrolled speaker" — so a clone that paused a lot
+got a free pass on every quiet window and dragged the EMA down. The
+pipeline now carries the last confident mismatch forward within the
+call and marks the window `speaker_scored: false`; the dashboard shows
+"not assessed" instead of a green match
+(`tests/test_quiet_window_carry_forward.py`). Re-measured: no fixture
+number moved.
+
 **Audible alert.** The dashboard plays a double beep (880 Hz) when the
 level first rises into HIGH and a faster triple beep (1175 Hz) into
 CRITICAL, plus the CRITICAL pattern once when the sustained alert
@@ -241,7 +253,7 @@ UI say which mode produced the result.
 | fusion weights (acoustic / speaker / context) | 0.45 / 0.45 / 0.10 | **0.00** / 0.90 / 0.10 |
 | acoustic signal | wav2vec2 spoof classifier, validated (AUC 0.81 cross-domain, 1.00 in-domain) | measured AUC 0.25 / 0.14 — below chance, so weight is **exactly zero** |
 | defence against an impostor (different person) | yes — speaker layer | yes — speaker layer |
-| defence against a **clone of the enrolled speaker** | yes — acoustic layer: 8/12 ASVspoof clones, 7/7 In-the-Wild clones reach HIGH+ | **none** — 0/12 ASVspoof clones; the clone passes the voiceprint (median mismatch 0.04) and nothing else can fire |
+| defence against a **clone of the enrolled speaker** | yes — acoustic layer: 8/12 ASVspoof clones, 7/7 In-the-Wild clones reach HIGH+ | **none** — 0/12 ASVspoof clones; the clone passes the voiceprint (median mismatch 0.00) and nothing else can fire |
 | false positives on genuine multi-speaker calls | 0/16 utterances, 0/8 calls (ASVspoof); 0/7 (In-the-Wild) | 0/16, 0/8; 0/7 |
 | what it is | **the real system** | an offline fallback with a structurally reduced capability |
 
@@ -448,8 +460,9 @@ still being useful for compliance.
 - **The speaker-consistency layer catches impostors, not clones.** It
   separates two different people cleanly (mismatch 0.00 vs 1.00), but on
   ASVspoof spoofs — which are TTS/VC systems built to *sound like* the
-  target speaker — the median mismatch is 0.04. A good clone of the
-  enrolled person passes this check. That is the well-known ASV
+  target speaker — the median mismatch is 0.00 at the 5 s window
+  (`scripts/evaluate_fused.py`). A good clone of the enrolled person
+  passes this check. That is the well-known ASV
   vulnerability that ASVspoof exists to study, and it is exactly why the
   acoustic layer has to carry real weight, which today it does not.
 - **Measured end-to-end on ASVspoof 2019 LA, heuristic backend: 0%
@@ -460,6 +473,10 @@ still being useful for compliance.
   data you don't yet have.
 - The audit log is a local hash chain, not yet an anchored distributed
   ledger — say so explicitly, it's a prototype of the mechanism.
+- Dependencies are pinned to the exact versions the suite was run
+  against (`pip freeze`, 2026-09-14); the voiceprint store writes under
+  a lock via temp-file + `os.replace`, so a crash mid-enrol cannot
+  truncate `voiceprints.json`.
 - **Enrolment is the root of trust and is only token-guarded.** With
   `ENROLL_TOKEN` unset anyone who can reach the port can overwrite a
   voiceprint (the overwrite is audited, not prevented). Production needs

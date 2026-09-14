@@ -1,24 +1,27 @@
-# Core pipeline + API
-numpy
-scipy
-soundfile
-fastapi
-uvicorn
-python-multipart
-pydantic
+# Pinned to the versions installed in venv/ (pip freeze) on 2026-09-14.
+# Submission day is the wrong day to discover an upstream release changed
+# behaviour; bump deliberately and re-run the suite.
 
-# Speaker-consistency layer (Resemblyzer speaker embeddings).
-# The pretrained weights ship inside the package, so once installed
-# this runs fully offline -- no download at demo time.
+# Core pipeline + API
+numpy==2.5.3
+scipy==1.18.1
+soundfile==0.14.0
+fastapi==0.141.1
+uvicorn==0.52.4
+python-multipart==0.0.32
+pydantic==2.13.5
+
+# Speaker-consistency layer (Resemblyzer speaker embeddings). The
+# pretrained weights ship inside the package, so once installed this
+# runs fully offline -- no download at demo time.
 #
-# Resemblyzer pulls in torch and librosa, so this install is ~300 MB
-# and takes a few minutes. Install the CPU-only torch build first if
-# you want to avoid the multi-GB CUDA wheels:
-#   pip install torch --index-url https://download.pytorch.org/whl/cpu
-resemblyzer
-librosa
+# Resemblyzer needs torch. Install the CPU-only build FIRST to avoid
+# the multi-GB CUDA wheels:
+#   pip install torch==2.14.0 --index-url https://download.pytorch.org/whl/cpu
+resemblyzer==0.1.4
+librosa==1.0.0
 
 # On Windows install webrtcvad-wheels, NOT webrtcvad: the latter has
 # no prebuilt wheel and needs Microsoft C++ Build Tools to compile.
-webrtcvad-wheels; sys_platform == "win32"
-webrtcvad; sys_platform != "win32"
+webrtcvad-wheels==2.0.14; sys_platform == "win32"
+webrtcvad==2.0.10; sys_platform != "win32"
