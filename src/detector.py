@@ -69,50 +69,70 @@ class HeuristicDetector:
 
     # ---- calibration constants -------------------------------------
     #
-    # These were previously chosen against the synthetic sine-wave
-    # signals in demo_cli.py, and were roughly an order of magnitude
-    # away from what real speech measures. Measured over 128 chunks of
-    # a 6.4-minute real 16 kHz recording, every sub-score came out at
-    # exactly 0.000 for every chunk — the detector was inert on real
-    # audio, not merely weak:
+    # Calibrated against ASVspoof 2019 LA (dev partition, labels from
+    # the official protocol file): 48 bonafide utterances from 8
+    # speakers and 12 spoofed utterances across all six attack systems
+    # A01-A06. See tests/test_detector_calibration.py and
+    # fixtures/asvspoof2019/README.md.
     #
-    #     measurement        real speech (p10/median/p90)   old threshold
-    #     f0 jitter          0.063 / 0.151 / 0.260          < 0.010
-    #     spectral flatness  0.036 / 0.091 / 0.165          < 0.050
-    #     envelope variance  0.0092 / 0.0185 / 0.0400       < 0.0020
+    # READ THIS BEFORE QUOTING ANY NUMBER OFF THIS DETECTOR.
     #
-    # The constants below are anchored on that measured distribution:
-    # each fires only once a measurement leaves the range real speech
-    # actually occupies. See tests/test_detector_calibration.py.
+    # On that labelled data the three features barely separate the
+    # classes. P(a spoof looks more spoof-like than a random bonafide):
     #
-    # HONEST SCOPE: calibrated against one real speaker for the
-    # genuine side, and Windows SAPI TTS for the synthetic side. That
-    # establishes "does not false-positive on real speech" and "still
-    # catches over-smoothed vocoder output". It does NOT establish
-    # accuracy against modern neural voice clones — that needs
-    # ASVspoof 2019/2021 LA or In-the-Wild data, or the transformer
-    # backend. Do not quote an accuracy number off this baseline.
+    #     f0 jitter            0.54   (coin flip)
+    #     spectral flatness    0.64
+    #     envelope variance    0.29 in the direction the old code
+    #                          assumed -- i.e. BACKWARDS; 0.71 reversed
+    #
+    # The strongest achievable operating point on this set is roughly
+    # a third of spoofs caught at zero false positives, with the median
+    # spoof scoring about the same as the median bonafide. That is not
+    # a detector, it is a weak prior. It is kept because (a) it needs
+    # no model download, (b) it still catches the crude over-smoothed
+    # vocoder case, and (c) the fusion design lets the speaker layer
+    # carry the load. The accuracy path is the TransformerDetector.
+    #
+    # What the constants below DO guarantee: genuine speech scores
+    # ~0. Every threshold sits outside the observed bonafide range
+    # with margin, so a real caller does not get flagged by this
+    # layer. That property, not recall, is what they are tuned for.
+    #
+    # Two earlier calibrations are worth remembering as cautionary
+    # tales. Thresholds tuned on synthetic sine waves made the detector
+    # emit exactly 0.000 on all real audio. Thresholds then tuned on a
+    # single band-limited call recording (spectral flatness ~0.09)
+    # fired on 100% of studio-quality bonafide speech (flatness ~0.39),
+    # because flatness tracks recording conditions far more than it
+    # tracks synthesis. Flatness is therefore demoted to an extreme
+    # outlier check only.
 
-    # Real speech sits at p10=0.063 and up. Below 0.060 is flatter
-    # pitch than a human sustains; 0.020 is vocoder-flat.
-    JITTER_SUSPICIOUS = 0.060
-    JITTER_SATURATED = 0.020
+    # Bonafide f0 jitter: min 0.076, p05 0.083, median 0.115. Below
+    # 0.070 is flatter pitch than any bonafide sample sustained; the
+    # only spoofs caught at zero FP were A01/A03 in this range.
+    JITTER_SUSPICIOUS = 0.070
+    JITTER_SATURATED = 0.035
 
-    # Two-sided, because the measurement contradicted the assumption
-    # the old code encoded. Real speech occupies 0.017-0.220
-    # (p01-p99). Classic vocoder output sits BELOW that (too tonal),
-    # but the TTS measured here sat well ABOVE it (median 0.396,
-    # i.e. 4x more spectrally flat than real speech, not less). So
-    # this scores "outside the range real speech occupies", in either
-    # direction, rather than assuming a direction.
-    FLATNESS_TONAL = 0.020          # below this: unnaturally tonal
-    FLATNESS_TONAL_SAT = 0.005
-    FLATNESS_NOISY = 0.250          # above this: unnaturally noise-like
-    FLATNESS_NOISY_SAT = 0.350
+    # Bonafide spectral flatness spanned 0.12-0.57 on studio speech
+    # and ~0.09 on a call recording. Nothing inside that span is
+    # evidence of anything. Only fire on values no speech recording
+    # produces: near-pure-tone or near-white-noise.
+    FLATNESS_TONAL = 0.010
+    FLATNESS_TONAL_SAT = 0.003
+    FLATNESS_NOISY = 0.700
+    FLATNESS_NOISY_SAT = 0.850
 
-    # Real speech sits at p10=0.0092 and up.
-    ENV_VAR_SUSPICIOUS = 0.008
-    ENV_VAR_SATURATED = 0.002
+    # Envelope variance. ASVspoof bonafide: min 0.0028, max 0.0277; a
+    # separate call recording ran to 0.054 in normal speech. The lower
+    # bound is the classic over-smoothed-vocoder cue and is safely
+    # below both. An upper bound anchored on the ASVspoof max fired on
+    # ~15% of that other recording while catching one spoof in twelve,
+    # so it is set far out — a guard against non-speech input, not a
+    # spoof cue.
+    ENV_VAR_SUSPICIOUS = 0.0025      # below: over-smoothed
+    ENV_VAR_SATURATED = 0.0008
+    ENV_VAR_EXCESS = 0.080           # above: not speech-like at all
+    ENV_VAR_EXCESS_SAT = 0.120
 
     def predict_detailed(self, wav: np.ndarray, sr: int) -> dict:
         """Returns the combined spoof_prob PLUS each sub-score, so the
@@ -159,9 +179,13 @@ class HeuristicDetector:
             ])
             env = env / (np.max(env) + 1e-9)
             env_var = float(np.var(np.diff(env)))
-            smoothness_score = float(np.clip(
+            too_smooth = np.clip(
                 (self.ENV_VAR_SUSPICIOUS - env_var)
-                / (self.ENV_VAR_SUSPICIOUS - self.ENV_VAR_SATURATED), 0, 1))
+                / (self.ENV_VAR_SUSPICIOUS - self.ENV_VAR_SATURATED), 0, 1)
+            too_erratic = np.clip(
+                (env_var - self.ENV_VAR_EXCESS)
+                / (self.ENV_VAR_EXCESS_SAT - self.ENV_VAR_EXCESS), 0, 1)
+            smoothness_score = float(max(too_smooth, too_erratic))
         else:
             smoothness_score = 0.0
 

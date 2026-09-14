@@ -81,7 +81,7 @@ pip install -r requirements-dev.txt
 pytest -q
 ```
 
-83 tests. The suite is built around the bugs that actually shipped, so
+90 tests. The suite is built around the bugs that actually shipped, so
 each of these would fail if the bug came back:
 
 | test file | pins |
@@ -89,7 +89,8 @@ each of these would fail if the bug came back:
 | `test_speaker_consistency.py` | a different speaker must score a high mismatch (this was 0.002) |
 | `test_fusion.py` | acoustic alone and speaker alone must each be able to alert; context alone must not |
 | `test_audit_log.py` | backdating a record must break the chain; blank lines must not crash verification |
-| `test_detector_calibration.py` | real speech must not be flagged; over-smoothed synthetic must be |
+| `test_detector_calibration.py` | labelled-bonafide ASVspoof speech must not be flagged; over-smoothed synthetic must be |
+| `test_false_positive_rate_asvspoof.py` | full fused pipeline on 8 real speakers' genuine calls: none may reach HIGH/CRITICAL |
 | `test_context_and_risk.py` | word-boundary keyword matching; peak risk reported, not the trailing EMA |
 | `test_api.py` | error paths return 4xx with a readable message, never a 500 |
 
@@ -222,14 +223,26 @@ still being useful for compliance.
 
 ## Known limitations (be upfront about these)
 
-- Heuristic acoustic backend is a signal-processing baseline, not a
-  trained classifier — good for demos, not a claimed production accuracy.
-  Its thresholds are calibrated against 6.4 minutes of one real speaker
-  (no false positives across 128 windows) and against over-smoothed
-  synthetic speech, which it still flags. That establishes "doesn't cry
-  wolf on real callers"; it does NOT establish accuracy against modern
-  neural voice clones. Do not quote an accuracy number off this backend
-  — use the transformer backend and a real dataset for that.
+- **Heuristic acoustic backend does not detect modern spoofs.** Measured
+  on ASVspoof 2019 LA (labels from the official protocol; see
+  `fixtures/asvspoof2019/`): 0 of 48 bonafide utterances from 8 speakers
+  are flagged (max score 0.000), but only 1 of 12 spoofs across systems
+  A01-A06 scores above 0.3, and the median spoof scores the same as the
+  median bonafide. Each of its three cues is close to a coin flip on
+  that data, and the envelope cue runs in the opposite direction to the
+  one the literature suggests. It is kept as a zero-download baseline
+  that catches crude over-smoothed vocoder output and never cries wolf;
+  it is not the accuracy path. Use `DETECTOR_BACKEND=transformer`.
+- **The speaker-consistency layer catches impostors, not clones.** It
+  separates two different people cleanly (mismatch 0.00 vs 1.00), but on
+  ASVspoof spoofs — which are TTS/VC systems built to *sound like* the
+  target speaker — the median mismatch is 0.04. A good clone of the
+  enrolled person passes this check. That is the well-known ASV
+  vulnerability that ASVspoof exists to study, and it is exactly why the
+  acoustic layer has to carry real weight, which today it does not.
+- **Measured end-to-end on ASVspoof 2019 LA, heuristic backend: 0%
+  false positives on genuine multi-speaker calls, and 0 of 12 spoofs
+  reach HIGH/CRITICAL.** Say this to judges before they find it.
 - Transformer backend's out-of-the-box accuracy is strongest on
   English/Western voices; Indian-accent robustness needs fine-tuning
   data you don't yet have.

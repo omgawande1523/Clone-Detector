@@ -26,3 +26,7 @@ htmlcov/
 .idea/
 .DS_Store
 Thumbs.db
+
+# raw ASVspoof download (fixtures/ holds the committed subset)
+data/
+!fixtures/**/*.json
