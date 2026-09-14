@@ -81,7 +81,7 @@ pip install -r requirements-dev.txt
 pytest -q
 ```
 
-127 tests. The suite is built around the bugs that actually shipped, so
+134 tests. The suite is built around the bugs that actually shipped, so
 each of these would fail if the bug came back:
 
 | test file | pins |
@@ -95,6 +95,7 @@ each of these would fail if the bug came back:
 | `test_api.py` | error paths return 4xx with a readable message, never a 500 |
 | `test_transformer_backend.py` | wav2vec2 backend on both fixture sets, cross- and in-domain reported separately |
 | `test_fused_modes.py` | full fused pipeline per mode: zero FP in both; targeted-clone recall floor in transformer mode; heuristic acoustic weight is exactly zero |
+| `test_risk_engine_consistency.py` | a single unsustained crossing reports final_level HIGH, sustained_level LOW, and never says "no signal detected" |
 | `test_alert_capability.py` | heuristic mode with no enrolment can never alert and must say so in /health, /analyze and the live ready message |
 | `test_live_ws.py` | `/ws/live` answers each window before the next is sent, one risk engine carries across windows, an alert is audited the instant it fires, and live and batch paths score identically |
 
@@ -197,7 +198,22 @@ when its result came back:
 ```
 
 A batching server would show that gap growing toward 30 s by the last
-window. Run it with `--clone` to stream a targeted clone of the enrolled
+window.
+
+**Level vs alert — they measure different things.** `final_level` is
+the level of the highest EMA the call reached and has *no* sustain
+requirement; `alert_triggered` needs the EMA at or above the threshold
+for two consecutive windows. A single window that crosses and falls
+straight back therefore gives `final_level: HIGH` with
+`alert_triggered: false`. That is the sustain rule working, not a
+contradiction — but it used to be reported next to "no signal
+detected", which read as one. Every verdict now also carries
+`sustained_level` (highest level reached while the sustain rule held),
+`peak_windows_above` (longest run at or above threshold) and a
+three-way `verdict_state`: `sustained_alert` / `peaked_unsustained` /
+`clear`. The peaked-but-not-sustained wording names the peak value and
+recommends caution; it never says "no signal". The dashboard headline
+follows the same split (`tests/test_risk_engine_consistency.py`). Run it with `--clone` to stream a targeted clone of the enrolled
 speaker instead: the alert fires on window 1 (7.7 s into the call) and
 the audit record is written in the same instant.
 

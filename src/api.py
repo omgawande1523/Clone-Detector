@@ -235,18 +235,39 @@ def _verdict_payload(speaker_id, speaker_enrolled, ctx, timeline, verdict):
         "context_reasons": ctx["reasons"],
         "timeline": timeline,
         "final_risk_score": verdict["peak_risk_score"],
-        "final_level": verdict["peak_level"],
+        "final_level": verdict["peak_level"],                      # peak EMA, no sustain requirement
+        "sustained_level": verdict["peak_sustained_level"],        # highest level while the sustain rule held
+        "peak_windows_above": verdict["peak_windows_above"],
+        "verdict_state": _verdict_state(verdict),
         "alert_triggered": verdict["alert_triggered"],
         "score_at_alert": verdict["score_at_alert"],
         "final_ema": verdict["final_ema"],
-        "recommendation": (
-            "Recommend secondary verification (call-back on a known number) "
-            "before proceeding with any sensitive action."
-            if verdict["alert_triggered"] else
-            "No strong impersonation signal detected in this call."
-        ),
+        "recommendation": _recommendation(verdict),
         "audit_logged": verdict["alert_triggered"],
     }
+
+
+def _verdict_state(verdict) -> str:
+    """Three-way split so level and alert never read as a contradiction:
+    sustained_alert / peaked_unsustained / clear."""
+    if verdict["alert_triggered"]:
+        return "sustained_alert"
+    if verdict["peak_level"] in ("HIGH", "CRITICAL"):
+        return "peaked_unsustained"
+    return "clear"
+
+
+def _recommendation(verdict) -> str:
+    state = _verdict_state(verdict)
+    if state == "sustained_alert":
+        return ("Recommend secondary verification (call-back on a known number) "
+                "before proceeding with any sensitive action.")
+    if state == "peaked_unsustained":
+        return (f"The call briefly crossed the alert threshold (peak risk "
+                f"{verdict['peak_risk_score']:.2f}, level {verdict['peak_level']}) but did not "
+                f"sustain it across consecutive windows, so no alert was raised. Treat with "
+                f"caution and consider secondary verification before any sensitive action.")
+    return "No strong impersonation signal detected in this call."
 
 
 @app.post("/analyze")

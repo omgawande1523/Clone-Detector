@@ -473,9 +473,12 @@ function render(d) {
   const v = $('verdict');
   v.className = 'card show ' + (alert ? 'alert' : 'genuine');
 
-  $('headlineText').textContent = alert
-    ? 'Possible voice clone detected'
+  const state = d.verdict_state || (alert ? 'sustained_alert' : 'clear');
+  $('headlineText').textContent =
+    state === 'sustained_alert' ? 'Possible voice clone detected'
+    : state === 'peaked_unsustained' ? 'Suspicious — crossed the threshold but did not sustain'
     : 'Voice appears genuine';
+  v.className = 'card show ' + (state === 'clear' ? 'genuine' : 'alert');
   const m = d.detection_mode || {};
   const vm = $('verdictMode');
   vm.className = 'modetag ' + (m.security_posture === 'full' ? 'full' : 'reduced');
@@ -489,7 +492,9 @@ function render(d) {
   $('levelBadge').style.background = LEVEL_BG[level] || '#dcfce7';
   $('scoreText').textContent =
     `· peak risk ${d.final_risk_score.toFixed(2)} of 1.00, alert threshold 0.40`
-    + (d.score_at_alert != null ? ` · first crossed at ${d.score_at_alert.toFixed(2)}` : '');
+    + (d.sustained_level ? ` · sustained: ${d.sustained_level}` : '')
+    + (d.peak_windows_above != null ? ` (${d.peak_windows_above} consecutive window${d.peak_windows_above === 1 ? '' : 's'} above)` : '')
+    + (d.score_at_alert != null ? ` · alert fired at ${d.score_at_alert.toFixed(2)}` : '');
 
   $('gaugeFill').style.width = pct(d.final_risk_score);
   $('gaugeFill').style.background = colour;
@@ -552,8 +557,8 @@ function render(d) {
     reasons.style.display = 'none';
   }
 
-  $('rec').className = 'rec ' + (alert ? 'alert' : 'genuine');
-  $('rec').textContent = (alert ? '⚠ ' : '✓ ') + d.recommendation
+  $('rec').className = 'rec ' + (state === 'clear' ? 'genuine' : 'alert');
+  $('rec').textContent = (state === 'clear' ? '✓ ' : '⚠ ') + d.recommendation
     + (alert ? ' This alert has been written to the tamper-evident audit trail.' : '');
 
   $('timeline').textContent =
