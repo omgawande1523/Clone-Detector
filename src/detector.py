@@ -211,6 +211,47 @@ class HeuristicDetector:
         return self.predict_detailed(wav, sr)["spoof_prob"]
 
 
+# Label vocabulary for resolving which output class means "spoof".
+# Matched case-insensitively against the model's config.id2label.
+SPOOF_LABELS = {"spoof", "fake", "deepfake", "synthetic", "cloned", "clone", "tts", "spoofed", "generated"}
+BONAFIDE_LABELS = {"bonafide", "bona-fide", "bona_fide", "real", "genuine", "human", "original", "authentic", "natural"}
+
+
+def resolve_spoof_index(id2label: dict, override=None) -> dict:
+    """Decide, ONCE, which class index is the spoof class.
+
+    The old code scanned id2label per prediction for "spoof" | "fake" |
+    "1" and silently fell back to index 1. SPOOF_MODEL_ID is an
+    environment variable and the roadmap is to swap in a multilingual
+    XLSR model; if that model labels its classes "deepfake"/"bonafide"
+    or orders them the other way, the detector would run confidently
+    inverted with no error anywhere.
+
+    Rules: exactly one class must match the spoof vocabulary and every
+    other class must match the bonafide vocabulary. Anything else raises
+    at startup naming the model's actual labels. SPOOF_LABEL_INDEX (or
+    `override`) bypasses matching entirely. Never guess.
+    """
+    labels = {int(k): str(v) for k, v in dict(id2label).items()}
+    if override is not None and str(override).strip() != "":
+        idx = int(override)
+        if idx not in labels:
+            raise RuntimeError(
+                f"SPOOF_LABEL_INDEX={override} is not a class of this model; id2label is {labels}")
+        return {"spoof_index": idx, "spoof_label": labels[idx], "id2label": labels, "source": "SPOOF_LABEL_INDEX override"}
+    norm = {i: lab.strip().lower().replace(" ", "") for i, lab in labels.items()}
+    spoof = [i for i, lab in norm.items() if lab in SPOOF_LABELS]
+    bona = [i for i, lab in norm.items() if lab in BONAFIDE_LABELS]
+    if len(spoof) == 1 and len(bona) == len(labels) - 1:
+        return {"spoof_index": spoof[0], "spoof_label": labels[spoof[0]], "id2label": labels, "source": "matched from id2label"}
+    raise RuntimeError(
+        f"Cannot tell which output class of this model means 'spoof'. Its id2label is {labels}; "
+        f"recognised spoof-side names are {sorted(SPOOF_LABELS)} and bonafide-side names are "
+        f"{sorted(BONAFIDE_LABELS)}. Set SPOOF_LABEL_INDEX=<index> explicitly. Refusing to guess, "
+        f"because a wrong guess runs the detector inverted with no error."
+    )
+
+
 class TransformerDetector:
     """Real pretrained wav2vec2-based spoof/deepfake classifier.
 
@@ -249,6 +290,11 @@ class TransformerDetector:
             self.MODEL_ID, config=self.config
         ).to(self.device)
         self.model.eval()
+        # Resolve the label mapping once, here, and fail loudly if it is
+        # ambiguous -- see resolve_spoof_index().
+        self.label_mapping = resolve_spoof_index(
+            self.model.config.id2label, os.environ.get("SPOOF_LABEL_INDEX"))
+        self.spoof_index = self.label_mapping["spoof_index"]
 
     def predict(self, wav: np.ndarray, sr: int) -> float:
         target_sr = self.feature_extractor.sampling_rate
@@ -263,15 +309,7 @@ class TransformerDetector:
             logits = self.model(**inputs).logits
             probs = self._torch.softmax(logits, dim=-1)[0]
 
-        # Label order depends on the model's config.id2label — assume
-        # index 1 is "spoof"/"fake"; verify against config on first run.
-        id2label = self.model.config.id2label
-        spoof_idx = 1
-        for idx, label in id2label.items():
-            if str(label).lower() in ("spoof", "fake", "1"):
-                spoof_idx = int(idx)
-                break
-        return float(probs[spoof_idx])
+        return float(probs[self.spoof_index])
 
     def predict_detailed(self, wav: np.ndarray, sr: int) -> dict:
         """Interface parity with HeuristicDetector. The transformer is

@@ -81,7 +81,7 @@ pip install -r requirements-dev.txt
 pytest -q
 ```
 
-143 tests. The suite is built around the bugs that actually shipped, so
+153 tests. The suite is built around the bugs that actually shipped, so
 each of these would fail if the bug came back:
 
 | test file | pins |
@@ -95,6 +95,7 @@ each of these would fail if the bug came back:
 | `test_api.py` | error paths return 4xx with a readable message, never a 500 |
 | `test_transformer_backend.py` | wav2vec2 backend on both fixture sets, cross- and in-domain reported separately |
 | `test_fused_modes.py` | full fused pipeline per mode: zero FP in both; targeted-clone recall floor in transformer mode; heuristic acoustic weight is exactly zero |
+| `test_label_mapping.py` | the spoof class is resolved once from id2label or an explicit override, and ambiguous labels raise instead of guessing |
 | `test_resampling.py` | one anti-aliased resampler everywhere: a >8 kHz tone does not alias into band; a 48 kHz round trip keeps its verdict |
 | `test_risk_engine_consistency.py` | a single unsustained crossing reports final_level HIGH, sustained_level LOW, and never says "no signal detected" |
 | `test_alert_capability.py` | heuristic mode with no enrolment can never alert and must say so in /health, /analyze and the live ready message |
@@ -340,6 +341,18 @@ fine-tuning an XLSR-53 multilingual variant (e.g.
 `Gustking/wav2vec2-large-xlsr-deepfake-audio-classification`) on Indic
 speech — name this as roadmap/future work; it's a genuinely unsolved
 gap that strengthens your pitch rather than weakens it.
+
+**Swapping the model cannot silently invert the detector.** Which
+output class means "spoof" is resolved once at startup from the
+model's `id2label` against a vocabulary on both sides (spoof / fake /
+deepfake / synthetic / cloned / tts … vs bonafide / real / genuine /
+human / original …). If exactly one class is spoof-side and the rest
+bonafide-side it is used; anything else — `LABEL_0`/`LABEL_1`, two
+spoof-like names, a third class — raises at startup naming the model's
+actual labels, and `SPOOF_LABEL_INDEX=<n>` is the explicit override. It
+never falls back to a guess (the old code defaulted to index 1). The
+resolved mapping is shown in `/health` as `label_mapping`
+(`tests/test_label_mapping.py`).
 
 ## Testing with real audio
 

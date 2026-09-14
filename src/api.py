@@ -148,6 +148,9 @@ def health():
         "status": "ok",
         "backend": _detector.name,
         "detection_mode": _mode,
+        # Which output class the transformer treats as "spoof" -- visible
+        # before a demo so a swapped model cannot run silently inverted.
+        "label_mapping": getattr(_detector, "label_mapping", None),
         "alert_threshold": ALERT_THRESHOLD,
         "fusion_check": check_alertable(ALERT_THRESHOLD, _weights),
         # Runtime capability, not weight capacity: can a call alert at
