@@ -10,7 +10,7 @@ Datasets (see fixtures/*/README.md for provenance and licence):
 
   ASVspoof 2019 LA  — per speaker: 4 bonafide utterances joined for
                       enrolment, 2 held-out bonafide for testing (also
-                      joined into one ~6 s "call"), and the spoofs
+                      joined into one ~4-9 s "call"), and the spoofs
                       that TARGET that speaker scored against that
                       speaker's print. Every spoof in the fixture set
                       targets an enrolled speaker, so the spoof rows
@@ -33,7 +33,7 @@ import os
 
 import numpy as np
 
-from .audio_pipeline import load_mono
+from .audio_pipeline import load_mono, DEFAULT_CHUNK_SECONDS
 from .fusion import fuse, FusionWeights
 from .risk_engine import RiskEngine
 from .context_engine import score_context
@@ -43,11 +43,11 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ASV = os.path.join(ROOT, "fixtures", "asvspoof2019")
 ITW = os.path.join(ROOT, "fixtures", "in_the_wild")
 SR = 16000
-CHUNK_S = 3.0
+CHUNK_S = DEFAULT_CHUNK_SECONDS
 
 
-def _chunks(wav):
-    n = int(SR * CHUNK_S)
+def _chunks(wav, chunk_s=CHUNK_S):
+    n = int(SR * chunk_s)
     for start in range(0, len(wav), n):
         seg = wav[start:start + n]
         if len(seg) < SR * 0.2:
@@ -55,12 +55,13 @@ def _chunks(wav):
         yield start / SR, seg
 
 
-def run_call(wav, reference_print, detector, weights: FusionWeights, ctx_score=0.0):
+def run_call(wav, reference_print, detector, weights: FusionWeights, ctx_score=0.0,
+             chunk_s=CHUNK_S):
     """One piece of audio through the full pipeline. Returns
     (risk-engine summary, per-chunk rows, speaker_layer_had_an_opinion)."""
     engine = RiskEngine()
     rows, speaker_scored = [], False
-    for t, seg in _chunks(wav):
+    for t, seg in _chunks(wav, chunk_s):
         acoustic = detector.predict_detailed(seg, SR)["spoof_prob"]
         live = compute_voiceprint(seg, SR) if reference_print is not None else None
         if live is not None:
@@ -101,7 +102,7 @@ def _asv_wav(utt):
     return wav
 
 
-def evaluate_asvspoof(detector, weights: FusionWeights):
+def evaluate_asvspoof(detector, weights: FusionWeights, chunk_s=CHUNK_S):
     labels = asvspoof_labels()
     manifest = json.load(open(os.path.join(ASV, "manifest.json")))
     for m in manifest:                       # protocol is the authority
@@ -122,22 +123,22 @@ def evaluate_asvspoof(detector, weights: FusionWeights):
                  if m["speaker"] == spk and m["role"] == "test" and m["key"] == "bonafide"]
         for u in tests:
             wav = _asv_wav(u)
-            genuine.append(_row(u, spk, "bonafide", "-", wav, *run_call(wav, prints[spk], detector, weights, ctx)))
+            genuine.append(_row(u, spk, "bonafide", "-", wav, *run_call(wav, prints[spk], detector, weights, ctx, chunk_s)))
         wav = np.concatenate([_asv_wav(u) for u in tests])
-        calls.append(_row("+".join(tests), spk, "bonafide", "-", wav, *run_call(wav, prints[spk], detector, weights, ctx)))
+        calls.append(_row("+".join(tests), spk, "bonafide", "-", wav, *run_call(wav, prints[spk], detector, weights, ctx, chunk_s)))
     for m in manifest:
         if m["key"] != "spoof":
             continue
         wav = _asv_wav(m["utt"])
         ref = prints[m["speaker"]]           # every spoof targets an enrolled speaker
         spoof.append(_row(m["utt"], m["speaker"], "spoof", m["system"], wav,
-                          *run_call(wav, ref, detector, weights, ctx)))
+                          *run_call(wav, ref, detector, weights, ctx, chunk_s)))
     return dict(dataset="ASVspoof 2019 LA", speakers=speakers, genuine=genuine, calls=calls, spoof=spoof)
 
 
 # --------------------------------------------------------- In-the-Wild
 
-def evaluate_itw(detector, weights: FusionWeights):
+def evaluate_itw(detector, weights: FusionWeights, chunk_s=CHUNK_S):
     rows = []
     for line in open(os.path.join(ITW, "meta.subset.csv")):
         if line.startswith("file,"):
@@ -154,10 +155,10 @@ def evaluate_itw(detector, weights: FusionWeights):
         bwav, sr = load_mono(os.path.join(ITW, "wav", d["bona-fide"]))
         ref = compute_voiceprint(bwav, sr)
         genuine.append(_row(d["bona-fide"], speaker, "bonafide", "-", bwav,
-                            *run_call(bwav, ref, detector, weights, ctx)))
+                            *run_call(bwav, ref, detector, weights, ctx, chunk_s)))
         swav, sr = load_mono(os.path.join(ITW, "wav", d["spoof"]))
         spoof.append(_row(d["spoof"], speaker, "spoof", "itw", swav,
-                          *run_call(swav, ref, detector, weights, ctx)))
+                          *run_call(swav, ref, detector, weights, ctx, chunk_s)))
     return dict(dataset="In-the-Wild", speakers=sorted(by_spk), genuine=genuine, calls=[], spoof=spoof)
 
 

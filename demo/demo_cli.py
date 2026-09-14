@@ -31,12 +31,12 @@ from src.detector import get_detector
 from src.risk_engine import RiskEngine
 from src.speaker_consistency import compute_voiceprint, mismatch_between
 from src.context_engine import score_context
-from src.fusion import fuse
+from src.fusion import fuse, weights_for_backend
 from src.audit_log import AuditLog
 
 
 SR = 16000
-DURATION = 9.0  # seconds -> 3 chunks of 3s
+DURATION = 15.0  # seconds -> 3 chunks of 5s
 
 
 def synth_voice(duration, sr, f0=140.0, jitter_amt=0.02, smooth=False):
@@ -70,9 +70,10 @@ def synth_voice(duration, sr, f0=140.0, jitter_amt=0.02, smooth=False):
 
 def run_case(label, wav, sr, detector, reference_print=None, ctx=None, audit=None):
     print(f"\n=== {label} ===")
+    weights = weights_for_backend(detector.backend)   # same rule as the API
     engine = RiskEngine()
     ctx = ctx or {"context_score": 0.0, "reasons": []}
-    chunk_len = int(sr * 3.0)
+    chunk_len = int(sr * 5.0)
     for start in range(0, len(wav), chunk_len):
         segment = wav[start:start + chunk_len]
         if len(segment) < sr * 0.5:
@@ -85,7 +86,7 @@ def run_case(label, wav, sr, detector, reference_print=None, ctx=None, audit=Non
             speaker_mismatch = mismatch_between(reference_print, live_print)
         else:
             speaker_mismatch = 0.0
-        fused = fuse(acoustic["spoof_prob"], speaker_mismatch, ctx["context_score"])
+        fused = fuse(acoustic["spoof_prob"], speaker_mismatch, ctx["context_score"], weights)
         result = engine.update(fused["fused_score"])
         t = start / sr
         print(
@@ -101,7 +102,7 @@ def run_case(label, wav, sr, detector, reference_print=None, ctx=None, audit=Non
 
 def main():
     detector = get_detector("heuristic")
-    print(f"Backend: {detector.name}")
+    print(f"Backend: {detector.name}  (fusion weights follow the backend: {weights_for_backend(detector.backend)})")
 
     genuine = synth_voice(DURATION, SR, smooth=False)
     robotic = synth_voice(DURATION, SR, smooth=True)

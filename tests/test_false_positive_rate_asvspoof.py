@@ -9,7 +9,7 @@ bonafide utterances joined for enrolment, 2 held out and scored
 individually and as one joined ~6 s "call". Context is neutral.
 
 Known limitation, stated rather than hidden: single ASVspoof
-utterances are one 3 s chunk, so the sustain rule means an ALERT can
+utterances fit in one 5 s chunk, so the sustain rule means an ALERT can
 never fire on one; the per-chunk LEVEL still can, and that is what the
 per-utterance rows are graded on. The joined calls exercise the full
 alert path.

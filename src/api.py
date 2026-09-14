@@ -37,7 +37,7 @@ import tempfile
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from .audio_pipeline import chunk_audio, load_mono
+from .audio_pipeline import chunk_audio, load_mono, DEFAULT_CHUNK_SECONDS
 from .risk_engine import RiskEngine, ALERT_THRESHOLD
 from .detector import get_detector
 from .speaker_consistency import VoiceprintStore
@@ -191,7 +191,7 @@ async def analyze(
         # Without this guard that surfaces as an HTTP 500 instead of a
         # "that file isn't valid audio" message.
         try:
-            chunks = list(chunk_audio(tmp_path, chunk_seconds=3.0))
+            chunks = list(chunk_audio(tmp_path, chunk_seconds=DEFAULT_CHUNK_SECONDS))
         except Exception as e:
             raise HTTPException(
                 status_code=400,

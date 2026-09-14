@@ -102,14 +102,14 @@ def test_transformer_mode_zero_fp_on_both_sets(transformer, t_asv, t_itw):
 @needs_transformer
 def test_transformer_mode_targeted_clone_recall(t_asv, t_itw):
     """THE threat model: a clone of the enrolled speaker, scored against
-    that speaker's own voiceprint. Measured 7/12 on ASVspoof (A01, A02
+    that speaker's own voiceprint. Measured 8/12 on ASVspoof at the 5 s window (A01-A03
     caught 2/2; A04 0/2) and 7/7 on In-the-Wild. Floors are set below
     the measurement so this guards against regression, not noise."""
     asv, itw = metrics(t_asv), metrics(t_itw)
     print(f"\n  targeted-clone HIGH+: ASVspoof {asv['spoof_caught']}/12  "
           + "  ".join(f"{k}:{v['caught']}/{v['n']}" for k, v in asv["per_system"].items())
           + f"   | In-the-Wild {itw['spoof_caught']}/7")
-    assert asv["spoof_caught"] >= 6
+    assert asv["spoof_caught"] >= 7
     assert asv["per_system"]["A01"]["caught"] == 2
     assert asv["per_system"]["A02"]["caught"] == 2
     assert itw["spoof_caught"] >= 6
@@ -124,14 +124,17 @@ def test_transformer_mode_beats_heuristic_mode_on_clones(t_asv, heuristic):
 
 
 @needs_transformer
-def test_chunking_can_lose_a_whole_file_detection(transformer):
-    """Documented, not fixed: LA_D_5685369 (A03) scores 0.948 whole-file
-    but 0.119 on its first 3 s chunk. If a chunk-size change fixes this,
-    the assertion below should be flipped and the README updated."""
-    from src.audio_pipeline import load_mono
+def test_window_size_keeps_the_whole_file_detection(transformer):
+    """LA_D_5685369 (A03) scores 0.948 whole-file, 0.119 on a 3 s window
+    and 0.948 on a 5 s window. The default window was moved 3 s -> 5 s
+    on that ablation (ASVspoof clone recall 7/12 -> 8/12, no new false
+    positives); this pins that the default window still catches it."""
+    from src.audio_pipeline import load_mono, DEFAULT_CHUNK_SECONDS
     wav, sr = load_mono(os.path.join(ASV, "flac", "LA_D_5685369.flac"))
     whole = transformer.predict(wav, sr)
-    first_chunk = transformer.predict(wav[: 3 * sr], sr)
-    print(f"\n  LA_D_5685369 whole-file {whole:.3f} vs first 3 s chunk {first_chunk:.3f}")
-    assert whole > 0.9
-    assert first_chunk < 0.5
+    three = transformer.predict(wav[: 3 * sr], sr)
+    default = transformer.predict(wav[: int(DEFAULT_CHUNK_SECONDS * sr)], sr)
+    print(f"\n  LA_D_5685369 whole {whole:.3f} | 3 s window {three:.3f} | "
+          f"default {DEFAULT_CHUNK_SECONDS:.0f} s window {default:.3f}")
+    assert whole > 0.9 and three < 0.5      # the original finding, kept on record
+    assert default > 0.9

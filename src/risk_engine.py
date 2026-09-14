@@ -4,7 +4,7 @@ single live "risk gauge" for the call, plus a discrete alert level.
 
 Design choices, explainable to judges:
 - EMA (exponential moving average) instead of the raw per-chunk score,
-  so one noisy 3-second window does not trigger a false alarm.
+  so one noisy scoring window does not trigger a false alarm.
 - Alerts require the EMA to *stay* above threshold for a few
   consecutive chunks (`sustain`), not just touch it once — reduces
   false positives on a single cough/laugh/noise burst.

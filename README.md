@@ -26,7 +26,7 @@ pass at once, then fuses the answers:
  call audio (.wav file today; SIP/VoIP media stream in production)
         │
         ▼
- audio_pipeline.py        -- splits into 3s chunks (simulates live streaming)
+ audio_pipeline.py        -- splits into 5s chunks (simulates live streaming)
         │
         ▼
  Multi-layer voice analysis engine
@@ -178,7 +178,7 @@ UI say which mode produced the result.
 | fusion weights (acoustic / speaker / context) | 0.45 / 0.45 / 0.10 | **0.00** / 0.90 / 0.10 |
 | acoustic signal | wav2vec2 spoof classifier, validated (AUC 0.81 cross-domain, 1.00 in-domain) | measured AUC 0.25 / 0.14 — below chance, so weight is **exactly zero** |
 | defence against an impostor (different person) | yes — speaker layer | yes — speaker layer |
-| defence against a **clone of the enrolled speaker** | yes — acoustic layer: 7/12 ASVspoof clones, 7/7 In-the-Wild clones reach HIGH+ | **none** — 0/12 ASVspoof clones; the clone passes the voiceprint (median mismatch 0.04) and nothing else can fire |
+| defence against a **clone of the enrolled speaker** | yes — acoustic layer: 8/12 ASVspoof clones, 7/7 In-the-Wild clones reach HIGH+ | **none** — 0/12 ASVspoof clones; the clone passes the voiceprint (median mismatch 0.04) and nothing else can fire |
 | false positives on genuine multi-speaker calls | 0/16 utterances, 0/8 calls (ASVspoof); 0/7 (In-the-Wild) | 0/16, 0/8; 0/7 |
 | what it is | **the real system** | an offline fallback with a structurally reduced capability |
 
@@ -203,10 +203,19 @@ limitations rather than fixed here:
   the fused output was already too small to alter any verdict; the
   change removes a below-chance signal from the sum, it does not
   remove a working one.
-- Scoring 3-second chunks can lose a detection the model makes on the
-  whole utterance: `LA_D_5685369` (A03) scores 0.948 whole-file and
-  0.119 on its first chunk, which is why fused recall on ASVspoof is
-  7/12 where raw whole-file recall was 8/12.
+- **Scoring window: 5 s** (was 3 s). Ablated at 3/5/6 s on the
+  transformer backend: a 3 s window missed an A03 clone the model
+  catches on the whole utterance (`LA_D_5685369`: 0.119 vs 0.948); 5 s
+  and 6 s both caught it, taking ASVspoof clone recall from 7/12 to
+  8/12 with zero new false positives and identical results to each
+  other, so 5 s was adopted for the lower latency. General statement
+  that still holds: sub-clip real-time scoring can under-detect
+  relative to whole-file scoring for some attack types; a production
+  system would buffer and re-score on a rolling window. Trade-off: a
+  sustained alert (two consecutive windows) now needs 10 s of audio
+  instead of 6 — immaterial on a real call, visible on 1–9 s fixture
+  clips, where sustained alerts on spoofs dropped from 2/12 to 1/12
+  even as level-based detection rose.
 
 ## Measured accuracy of the two acoustic backends
 
@@ -228,7 +237,7 @@ Transformer misses on ASVspoof are structured, not random: neural /
 vocoder TTS (A01–A03) is caught at >0.93 every time; waveform
 concatenation of real speech units (A04) is missed every time; the two
 voice-conversion systems (A05, A06) go 1-for-2 each. Cost: 378 MB
-download once, ~0.2–0.3 s per 3 s chunk on a laptop CPU.
+download once, ~0.2–0.4 s per 5 s chunk on a laptop CPU.
 `tests/test_transformer_backend.py` re-measures this (skipped unless
 the weights are cached locally).
 
