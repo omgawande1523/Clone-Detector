@@ -34,3 +34,6 @@ data/
 # raw In-the-Wild download (fixtures/ holds the committed subset)
 # (data/ already covers it; listed for clarity)
 !fixtures/**/*.csv
+
+# diagnostic raw-audio captures from /ws/live (LIVE_CAPTURE_DIR)
+live_capture/

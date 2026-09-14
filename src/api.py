@@ -313,6 +313,24 @@ def _decode_live_chunk(data: bytes):
     return np.frombuffer(data, dtype="<i2").astype(np.float32) / 32768.0, LIVE_SR
 
 
+# DIAGNOSTIC ONLY. When LIVE_CAPTURE_DIR is set, every chunk received on
+# /ws/live is written to disk as WAV alongside its sub-scores, so a
+# live-call verdict can be reproduced and inspected offline
+# (scripts/live_capture_report.py). Off by default: it stores raw audio,
+# which the audit trail deliberately never does.
+_LIVE_CAPTURE_DIR = os.environ.get("LIVE_CAPTURE_DIR")
+
+
+def _capture_live_chunk(session_tag, index, waveform, sr, row):
+    if not _LIVE_CAPTURE_DIR:
+        return
+    d = os.path.join(_LIVE_CAPTURE_DIR, session_tag)
+    os.makedirs(d, exist_ok=True)
+    sf.write(os.path.join(d, f"chunk{index:03d}.wav"), waveform, sr, subtype="PCM_16")
+    with open(os.path.join(d, "scores.jsonl"), "a") as f:
+        f.write(json.dumps({"index": index, "detection_mode": _mode["mode"], **row}) + chr(10))
+
+
 @app.websocket("/ws/live")
 async def ws_live(ws: WebSocket):
     await ws.accept()
@@ -331,6 +349,7 @@ async def ws_live(ws: WebSocket):
     )
     speaker_enrolled = bool(speaker_id and _voiceprints.has(speaker_id))
     engine = RiskEngine()               # ONE engine for the whole call
+    session_tag = time.strftime("%Y%m%d-%H%M%S") + f"-{speaker_id or 'nospeaker'}"
     timeline = []
     call_clock = 0.0
     audit_logged = False
@@ -369,6 +388,7 @@ async def ws_live(ws: WebSocket):
                     _score_chunk, waveform, sr, call_clock, speaker_id, speaker_enrolled, ctx, engine)
                 call_clock += len(waveform) / sr
                 timeline.append(row)
+                _capture_live_chunk(session_tag, len(timeline) - 1, waveform, sr, row)
                 if row["alert"] and not audit_logged:
                     # Same audit write as /analyze, but at the moment the
                     # alert first fires — a live call may never "end".
