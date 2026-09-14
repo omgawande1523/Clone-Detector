@@ -59,13 +59,14 @@ def test_sustained_spike_is_an_alert_and_levels_agree():
 
 
 def test_mid_call_spike_from_elevated_baseline_is_peaked_but_not_sustained():
-    """Same thing mid-call: EMA 0.30 -> 0.35*1.0 + 0.65*0.30 = 0.545 (HIGH)
-    for one window, then back down. A spike from a LOW baseline cannot
-    reach HIGH at all through the EMA (max 0.35), which is the smoothing
-    doing its job."""
+    """Same thing mid-call: one window at 1.0 lifts the EMA into HIGH,
+    then the score falls back. The streak counts windows whose OWN score
+    is above threshold, so one spike gives a streak of 1 and no alert --
+    while the slow release keeps the LEVEL elevated for a few windows,
+    which is exactly what the sustained_level split reports."""
     summary = _run([0.30, 0.30, 1.0, 0.10, 0.10])
     assert summary["alert_triggered"] is False
-    assert summary["peak_level"] == "HIGH"
+    assert summary["peak_level"] in ("HIGH", "CRITICAL")
     assert summary["peak_sustained_level"] == "LOW"
     assert summary["peak_windows_above"] == 1
     assert _verdict_state(summary) == "peaked_unsustained"
@@ -92,10 +93,12 @@ def test_sustained_level_only_counts_windows_while_alert_held():
     """The peak EMA can be reached on the first window above threshold
     (before sustain); sustained_level must reflect the EMA once the
     rule actually held, not that earlier peak."""
-    s = _run([1.0, 0.45, 0.45])      # EMA: 1.0, 0.81, 0.68 -> alert holds from window 2
+    s = _run([1.0, 0.45, 0.45])      # every window is itself above threshold
     assert s["alert_triggered"] is True
     assert s["peak_level"] == "CRITICAL"
-    assert s["peak_sustained_level"] == level_for(0.35 * 0.45 + 0.65 * 1.0)
+    # EMA falls on window 1 (release), so the first SUSTAINED window is lower
+    # than the peak: that is the distinction this field exists to make.
+    assert s["peak_sustained_level"] == level_for(0.80 * 1.0 + 0.20 * 0.45)
 
 
 def test_verdict_state_and_recommendation_are_three_way():

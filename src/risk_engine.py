@@ -3,11 +3,43 @@ risk_engine.py — turns a stream of per-chunk fused risk scores into a
 single live "risk gauge" for the call, plus a discrete alert level.
 
 Design choices, explainable to judges:
-- EMA (exponential moving average) instead of the raw per-chunk score,
-  so one noisy scoring window does not trigger a false alarm.
-- Alerts require the EMA to *stay* above threshold for a few
-  consecutive chunks (`sustain`), not just touch it once — reduces
-  false positives on a single cough/laugh/noise burst.
+- ASYMMETRIC EMA: fast attack, slow release. A rising score is smoothed
+  with ATTACK_ALPHA (0.60) and a falling one with RELEASE_ALPHA (0.20).
+  This is standard alarm behaviour — react quickly to danger, and do
+  not let one quiet window clear a call that already looked bad.
+
+  A single symmetric alpha of 0.35 was the second half of the bug that
+  let a confidently-detected clone go unalerted: with the fused score
+  capped at 0.448 by the old weighted-average fusion, the EMA needed
+  six windows (30 s) just to approach the 0.40 threshold, and seven to
+  satisfy the sustain rule. Fusion alone was not enough to fix it;
+  smoothing dynamics and the combination rule had to change together.
+  See fixtures/live_clone_session/ for the captured failure.
+- Alerts require the EVIDENCE to persist: `sustain_required`
+  consecutive windows whose own fused score is at/above threshold,
+  AND a smoothed EMA also at/above it. Reduces false positives on a
+  single cough/laugh/noise burst. With a fast attack this no longer
+  costs 30 seconds.
+
+  The streak counts the per-window score, not the EMA. It used to
+  count the EMA, which was safe only while the EMA fell fast: with a
+  slow release a single spike keeps the EMA above threshold for
+  several windows, and an EMA-based streak would reach `sustain` on
+  its own and call one spike a sustained alert. Counting the instant
+  score keeps "sustained" meaning what it says — the detector kept
+  seeing it — while the EMA still decides the reported LEVEL.
+- Windows with no speech do not move the EMA at all, and the first
+  window WITH speech seeds it. A silent or noise-only lead-in used to
+  initialise the EMA at its own near-zero score and cost roughly two
+  windows of climb. Such windows are reported with scored=False so the
+  UI can say "no speech" rather than showing a misleading 0.00 risk.
+
+  FAIL-SAFE: a window carrying alert-level evidence is ALWAYS scored,
+  whatever the speech detector says. A detector confident enough to
+  cross the threshold has found something, and a speech-detection
+  false negative must never be able to suppress it -- that would
+  recreate, from a different direction, the exact bug this file's
+  history is about.
 - The engine tracks the PEAK risk over the call, not just the latest
   value. A call that is cloned in the first minute and genuine
   afterwards is a cloned call; reporting the trailing EMA would let
@@ -61,9 +93,15 @@ def level_for(score: float) -> str:
     return label
 
 
+# Asymmetric smoothing. attack > release on purpose.
+ATTACK_ALPHA = 0.60       # score rising  -> respond fast
+RELEASE_ALPHA = 0.20      # score falling -> decay slowly
+
+
 @dataclass
 class RiskEngine:
-    alpha: float = 0.35                        # EMA smoothing factor
+    attack_alpha: float = ATTACK_ALPHA
+    release_alpha: float = RELEASE_ALPHA
     alert_threshold: float = ALERT_THRESHOLD
     sustain_required: int = 2                  # consecutive chunks above threshold
 
@@ -76,19 +114,43 @@ class RiskEngine:
     _peak_sustained: float = field(default=0.0, init=False)   # highest EMA while alert held
     _longest_streak: int = field(default=0, init=False)
 
-    def update(self, spoof_prob: float) -> dict:
+    def update(self, spoof_prob: float, speech_present: bool = True) -> dict:
+        """Fold one window's fused score into the call's risk gauge.
+
+        speech_present=False means the window held no assessable audio:
+        it is reported, but does not seed or move the EMA and does not
+        advance or reset the sustain streak. Silence is not evidence in
+        either direction.
+        """
+        # See FAIL-SAFE in the module docstring.
+        if not speech_present and spoof_prob >= self.alert_threshold:
+            speech_present = True
+
+        if not speech_present:
+            return {
+                "instant_score": round(float(spoof_prob), 4),
+                "risk_score": round(float(self._ema), 4),
+                "level": level_for(self._ema) if self._initialized else "LOW",
+                "alert": (self._above_streak >= self.sustain_required
+                          and self._ema >= self.alert_threshold),
+                "scored": False,
+            }
+
         if not self._initialized:
             self._ema = spoof_prob
             self._initialized = True
         else:
-            self._ema = self.alpha * spoof_prob + (1 - self.alpha) * self._ema
+            alpha = self.attack_alpha if spoof_prob > self._ema else self.release_alpha
+            self._ema = alpha * spoof_prob + (1 - alpha) * self._ema
 
-        if self._ema >= self.alert_threshold:
+        # Streak on the window's own score; EMA must agree before alerting.
+        if spoof_prob >= self.alert_threshold:
             self._above_streak += 1
         else:
             self._above_streak = 0
 
-        alert = self._above_streak >= self.sustain_required
+        alert = (self._above_streak >= self.sustain_required
+                 and self._ema >= self.alert_threshold)
 
         self._peak = max(self._peak, self._ema)
         self._longest_streak = max(self._longest_streak, self._above_streak)
@@ -103,6 +165,7 @@ class RiskEngine:
             "risk_score": round(float(self._ema), 4),
             "level": level_for(self._ema),
             "alert": alert,
+            "scored": True,
         }
 
     def summary(self) -> dict:

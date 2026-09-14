@@ -19,7 +19,7 @@ import soundfile as sf
 
 from src.audio_pipeline import resample_to, chunk_audio, PIPELINE_SR
 from src.detector import HeuristicDetector
-from src.fusion import weights_for_backend
+from src.fusion import caps_for_backend
 from src.evaluation import run_call, ASV, ITW, SR
 
 FIX_ITW = os.path.join(ITW, "wav", "9532.wav")          # 16 kHz bonafide, 5.65 s
@@ -93,7 +93,7 @@ def test_same_rate_is_identity():
 def _roundtrip_verdict(path, detector):
     wav, sr = sf.read(path, dtype="float32")
     assert sr == SR
-    w = weights_for_backend(detector.backend)
+    w = caps_for_backend(detector.backend)
     s0, r0, _ = run_call(wav, None, detector, w)
     up = resample_to(wav, SR, 48000)
     back = resample_to(up, 48000, SR)

@@ -75,6 +75,37 @@ DEFAULT_CHUNK_SECONDS = 5.0
 
 PIPELINE_SR = 16000
 
+# --- speech presence -------------------------------------------------
+# Deliberately dependency-light: short-time RMS above a floor for long
+# enough. This runs on the heuristic path too, which must NOT gain a
+# torch/Resemblyzer dependency, so it cannot use the VAD in
+# speaker_consistency.
+# An ABSOLUTE floor only. A relative floor (a fraction of the window's
+# loudest frame) was tried first and rejected: on a 1.0 s In-the-Wild
+# clone clip it reported "no speech" for audio the transformer scored
+# 0.996 synthetic, which silently suppressed a correct detection --
+# the same bug class this whole change set exists to remove. Measured
+# across the 28 committed fixture clips, the quietest real clip yields
+# 0.38 s above this floor; digital silence and -60 dBFS line noise
+# yield 0.00 s.
+SPEECH_RMS_FLOOR = 0.004      # below this a frame is line noise, not speech
+SPEECH_MIN_SECONDS = 0.25     # that much voiced audio makes a window scorable
+
+
+def has_speech(wav: np.ndarray, sr: int, frame_ms: int = 20) -> bool:
+    """True if the window holds at least SPEECH_MIN_SECONDS of audio
+    above the noise floor. Used to keep a lead-in with no speech from
+    seeding the risk EMA — see risk_engine.RiskEngine.update()."""
+    wav = np.asarray(wav, dtype=np.float32)
+    frame = max(1, int(sr * frame_ms / 1000))
+    if len(wav) < frame:
+        return False
+    n = len(wav) // frame
+    env = np.sqrt(np.mean(wav[:n * frame].reshape(n, frame) ** 2, axis=1))
+    if env.size == 0 or env.max() <= 0:
+        return False
+    return float(np.sum(env > SPEECH_RMS_FLOOR)) * frame_ms / 1000.0 >= SPEECH_MIN_SECONDS
+
 
 def chunk_audio(path: str, chunk_seconds: float = DEFAULT_CHUNK_SECONDS, overlap: float = 0.0,
                 target_sr: int = PIPELINE_SR):

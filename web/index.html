@@ -177,6 +177,7 @@
     <button id="enrollBtn" class="ghost" disabled>Enrol voiceprint</button>
     <div id="enrollStatus" class="status"></div>
     <div id="enrollGuard" class="status" style="color:var(--amber)" hidden>⚠ Enrolment is unauthenticated in this deployment (ENROLL_TOKEN not set): anyone who can reach the server can overwrite a voiceprint. Overwrites are written to the audit trail.</div>
+    <div id="enrolledList" class="status" style="color:var(--muted)"></div>
   </div>
 
   <!-- STEP 2 -->
@@ -303,6 +304,9 @@ async function checkHealth() {
     $('serverDown').classList.remove('show');
     showMode(d.detection_mode);
     $('enrollGuard').hidden = d.enroll_protected !== false;
+    if (d.enrolled_speakers) $('enrolledList').textContent = d.enrolled_speakers.length
+      ? `Enrolled voiceprints: ${d.enrolled_speakers.join(', ')}`
+      : 'No voiceprints enrolled yet — the speaker check will be inactive for every call.';
     // before any call: if an unenrolled call can never alert in this mode, say so now
     if (d.live_capability && !d.live_capability.unenrolled.can_ever_alert) {
       showCapability({ can_ever_alert: false, capability_warning:
@@ -731,6 +735,7 @@ function showLiveShell(mode) {
 function renderLiveChunk(m, tSent) {
   const colour = LEVEL_COLOR[m.level] || 'var(--green)';
   const alertNow = m.alert;
+  const noSpeech = m.speech_present === false;
   // sound: on level transition only (guarded), and once when the sustained alert first fires
   levelTransitionSound(live, m.level);
   if (alertNow && !live.alertSounded) { live.alertSounded = true; playAlertSound('critical'); }
@@ -781,8 +786,10 @@ function renderLiveChunk(m, tSent) {
     $('rec').textContent = '⚠ Alert raised mid-call. Recommend secondary verification before any sensitive action.' + (m.audit_logged ? ' Written to the tamper-evident audit trail.' : '');
     if (m.audit_logged && !live.audited) { live.audited = true; verifyAudit(); }
   }
-  $('timeline').textContent +=
-    `${String(m.start_time).padStart(5)}s  ${m.risk_score.toFixed(2)}  ${m.level.padEnd(9)} ${m.acoustic_score.toFixed(2).padStart(7)}  ${m.speaker_mismatch.toFixed(2).padStart(7)}  ${m.context_score.toFixed(2).padStart(7)}  ${m.dominant_signal.padEnd(9)} ${gap === null ? '' : Math.round(gap) + 'ms'}${alertNow ? '   ← ALERT' : ''}\n`;
+  $('timeline').textContent += noSpeech
+    ? `${String(m.start_time).padStart(5)}s  ---   no speech  (window not scored)
+`
+    : `${String(m.start_time).padStart(5)}s  ${m.risk_score.toFixed(2)}  ${m.level.padEnd(9)} ${m.acoustic_score.toFixed(2).padStart(7)}  ${m.speaker_mismatch.toFixed(2).padStart(7)}  ${m.context_score.toFixed(2).padStart(7)}  ${m.dominant_signal.padEnd(9)} ${gap === null ? '' : Math.round(gap) + 'ms'}${alertNow ? '   ← ALERT' : ''}\n`;
 }
 
 async function startLive() {
@@ -827,7 +834,7 @@ async function startLive() {
     } else if (m.type === 'chunk') {
       renderLiveChunk(m, live.pending.shift());
       const st = live.settings || {}; const proc = ['echoCancellation', 'noiseSuppression', 'autoGainControl'].filter(k => st[k]);
-      liveState(`live · ${m.index + 1} window${m.index ? 's' : ''} scored · processing ${proc.length ? proc.join('/') + ' ON' : 'off'}`, true);
+      liveState(`live · ${m.index + 1} window${m.index ? 's' : ''}${m.speech_present === false ? ' (last: no speech)' : ' scored'} · processing ${proc.length ? proc.join('/') + ' ON' : 'off'}`, true);
     } else if (m.type === 'summary') {
       render(m);
       $('liveLatency').hidden = live.gaps.length === 0;

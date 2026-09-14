@@ -33,8 +33,8 @@ import os
 
 import numpy as np
 
-from .audio_pipeline import load_mono, resample_to, DEFAULT_CHUNK_SECONDS
-from .fusion import fuse, FusionWeights
+from .audio_pipeline import load_mono, resample_to, has_speech, DEFAULT_CHUNK_SECONDS
+from .fusion import fuse, SignalCaps
 from .risk_engine import RiskEngine
 from .context_engine import score_context
 from .speaker_consistency import compute_voiceprint, mismatch_between
@@ -55,7 +55,7 @@ def _chunks(wav, chunk_s=CHUNK_S):
         yield start / SR, seg
 
 
-def run_call(wav, reference_print, detector, weights: FusionWeights, ctx_score=0.0,
+def run_call(wav, reference_print, detector, caps: SignalCaps, ctx_score=0.0,
              chunk_s=CHUNK_S):
     """One piece of audio through the full pipeline. Returns
     (risk-engine summary, per-chunk rows, speaker_layer_had_an_opinion)."""
@@ -69,16 +69,23 @@ def run_call(wav, reference_print, detector, weights: FusionWeights, ctx_score=0
             speaker_scored = True
             last_mismatch = mismatch_between(reference_print, live)
         mismatch = last_mismatch if last_mismatch is not None else 0.0
-        f = fuse(acoustic, mismatch, ctx_score, weights)
-        r = engine.update(f["fused_score"])
+        f = fuse(acoustic, mismatch, ctx_score, caps)
+        r = engine.update(f["fused_score"], speech_present=has_speech(seg, SR))
         rows.append(dict(t=t, acoustic=acoustic, speaker=mismatch, context=ctx_score,
                          risk=r["risk_score"], level=r["level"], alert=r["alert"],
-                         dominant=f["dominant_signal"]))
+                         scored=r.get("scored", True), dominant=f["dominant_signal"]))
     return engine.summary(), rows, speaker_scored
 
 
 def _row(utt, speaker, key, system, wav, summary, rows, scored):
+    # windows_to_alert: index of the first window whose alert fired,
+    # counting from the first SCORED window (a no-speech lead-in is not
+    # charged against detection speed). None if it never alerted.
+    scored_idx = [i for i, r in enumerate(rows) if r.get("scored", True)]
+    first = next((i for i, r in enumerate(rows) if r["alert"]), None)
+    w2a = (scored_idx.index(first) if first in scored_idx else first) if first is not None else None
     return dict(utt=utt, speaker=speaker, key=key, system=system, secs=len(wav) / SR,
+                windows_to_alert=w2a,
                 chunks=len(rows), speaker_scored=scored, summary=summary, rows=rows,
                 worst_acoustic=max(r["acoustic"] for r in rows),
                 worst_speaker=max(r["speaker"] for r in rows),
@@ -102,7 +109,7 @@ def _asv_wav(utt):
     return wav
 
 
-def evaluate_asvspoof(detector, weights: FusionWeights, chunk_s=CHUNK_S):
+def evaluate_asvspoof(detector, caps: SignalCaps, chunk_s=CHUNK_S):
     labels = asvspoof_labels()
     manifest = json.load(open(os.path.join(ASV, "manifest.json")))
     for m in manifest:                       # protocol is the authority
@@ -123,22 +130,22 @@ def evaluate_asvspoof(detector, weights: FusionWeights, chunk_s=CHUNK_S):
                  if m["speaker"] == spk and m["role"] == "test" and m["key"] == "bonafide"]
         for u in tests:
             wav = _asv_wav(u)
-            genuine.append(_row(u, spk, "bonafide", "-", wav, *run_call(wav, prints[spk], detector, weights, ctx, chunk_s)))
+            genuine.append(_row(u, spk, "bonafide", "-", wav, *run_call(wav, prints[spk], detector, caps, ctx, chunk_s)))
         wav = np.concatenate([_asv_wav(u) for u in tests])
-        calls.append(_row("+".join(tests), spk, "bonafide", "-", wav, *run_call(wav, prints[spk], detector, weights, ctx, chunk_s)))
+        calls.append(_row("+".join(tests), spk, "bonafide", "-", wav, *run_call(wav, prints[spk], detector, caps, ctx, chunk_s)))
     for m in manifest:
         if m["key"] != "spoof":
             continue
         wav = _asv_wav(m["utt"])
         ref = prints[m["speaker"]]           # every spoof targets an enrolled speaker
         spoof.append(_row(m["utt"], m["speaker"], "spoof", m["system"], wav,
-                          *run_call(wav, ref, detector, weights, ctx, chunk_s)))
+                          *run_call(wav, ref, detector, caps, ctx, chunk_s)))
     return dict(dataset="ASVspoof 2019 LA", speakers=speakers, genuine=genuine, calls=calls, spoof=spoof)
 
 
 # --------------------------------------------------------- In-the-Wild
 
-def evaluate_itw(detector, weights: FusionWeights, chunk_s=CHUNK_S):
+def evaluate_itw(detector, caps: SignalCaps, chunk_s=CHUNK_S):
     rows = []
     for line in open(os.path.join(ITW, "meta.subset.csv")):
         if line.startswith("file,"):
@@ -155,16 +162,16 @@ def evaluate_itw(detector, weights: FusionWeights, chunk_s=CHUNK_S):
         bwav, sr = load_mono(os.path.join(ITW, "wav", d["bona-fide"]))
         ref = compute_voiceprint(bwav, sr)
         genuine.append(_row(d["bona-fide"], speaker, "bonafide", "-", bwav,
-                            *run_call(bwav, ref, detector, weights, ctx, chunk_s)))
+                            *run_call(bwav, ref, detector, caps, ctx, chunk_s)))
         swav, sr = load_mono(os.path.join(ITW, "wav", d["spoof"]))
         spoof.append(_row(d["spoof"], speaker, "spoof", "itw", swav,
-                          *run_call(swav, ref, detector, weights, ctx, chunk_s)))
+                          *run_call(swav, ref, detector, caps, ctx, chunk_s)))
     return dict(dataset="In-the-Wild", speakers=sorted(by_spk), genuine=genuine, calls=[], spoof=spoof)
 
 
 # ------------------------------------------------------ 48 kHz round trip
 
-def roundtrip_48k(detector, weights: FusionWeights, items):
+def roundtrip_48k(detector, caps: SignalCaps, items):
     """Does a verdict survive being delivered at phone/laptop sample
     rates? Each 16 kHz clip is upsampled to 48 kHz (what a phone or
     browser would hand us) and resampled back through the pipeline's
@@ -175,10 +182,10 @@ def roundtrip_48k(detector, weights: FusionWeights, items):
     rows = []
     ctx = score_context()["context_score"]
     for label, wav, ref in items:
-        s0, r0, _ = run_call(wav, ref, detector, weights, ctx)
+        s0, r0, _ = run_call(wav, ref, detector, caps, ctx)
         wav48 = resample_to(wav, SR, 48000)
         back = resample_to(wav48, 48000, SR)
-        s1, r1, _ = run_call(back, ref, detector, weights, ctx)
+        s1, r1, _ = run_call(back, ref, detector, caps, ctx)
         rows.append(dict(label=label, level0=s0["peak_level"], level1=s1["peak_level"],
                          peak0=s0["peak_risk_score"], peak1=s1["peak_risk_score"],
                          alert0=s0["alert_triggered"], alert1=s1["alert_triggered"],
@@ -228,8 +235,12 @@ def metrics(result):
     for sysid in sorted({r["system"] for r in s}):
         rs = [r for r in s if r["system"] == sysid]
         per_system[sysid] = dict(n=len(rs), caught=sum(hi(r) for r in rs), alerted=sum(r["alert"] for r in rs),
-                                 peaks=[r["peak"] for r in rs])
+                                 peaks=[r["peak"] for r in rs],
+                                 w2a=[r["windows_to_alert"] for r in rs])
+    w2a = [r["windows_to_alert"] for r in s if r["windows_to_alert"] is not None]
     return dict(
+        windows_to_alert=sorted(w2a),
+        median_windows_to_alert=(sorted(w2a)[len(w2a) // 2] if w2a else None),
         n_genuine=len(g), genuine_fp=sum(hi(r) for r in g), genuine_alert=sum(r["alert"] for r in g),
         genuine_peak_max=max(r["peak"] for r in g),
         n_calls=len(result["calls"]), calls_fp=sum(hi(r) for r in result["calls"]),

@@ -31,3 +31,6 @@ data/
 
 # diagnostic raw-audio captures from /ws/live (LIVE_CAPTURE_DIR)
 live_capture/
+
+# voiceprint store lock file
+/voiceprints.json.lock

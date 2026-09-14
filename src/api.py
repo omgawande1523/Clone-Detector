@@ -55,12 +55,12 @@ from fastapi import FastAPI, UploadFile, File, Form, Header, HTTPException, WebS
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 
-from .audio_pipeline import chunk_audio, load_mono, resample_to, DEFAULT_CHUNK_SECONDS
+from .audio_pipeline import chunk_audio, load_mono, resample_to, has_speech, DEFAULT_CHUNK_SECONDS
 from .risk_engine import RiskEngine, ALERT_THRESHOLD
 from .detector import get_detector
 from .speaker_consistency import VoiceprintStore
 from .context_engine import score_context
-from .fusion import (fuse, check_alertable, weights_for_backend, detection_mode,
+from .fusion import (fuse, check_alertable, caps_for_backend, detection_mode,
                      reachable_max, capability_warning)
 from .audit_log import AuditLog
 
@@ -88,7 +88,7 @@ _detector = get_detector()          # loaded once at startup
 # Fusion weights follow the loaded backend automatically. There is no
 # flag for this: the heuristic backend's acoustic weight is zero because
 # it measured at/below chance on labelled data (see fusion.py).
-_weights = weights_for_backend(_detector.backend)
+_weights = caps_for_backend(_detector.backend)
 _mode = detection_mode(_detector.backend)
 _voiceprints = VoiceprintStore()    # path anchored to project root
 _audit = AuditLog()                 # path anchored to project root
@@ -182,8 +182,9 @@ def health():
         "live_capability": {
             "enrolled": reachable_max(_weights, True),
             "unenrolled": reachable_max(_weights, False),
-            "enrolled_speakers": sorted(_voiceprints._data.keys()),
+            "enrolled_speakers": _voiceprints.speaker_ids(),
         },
+        "enrolled_speakers": _voiceprints.speaker_ids(),
     }
 
 
@@ -202,7 +203,7 @@ async def enroll(speaker_id: str = Form(...), file: UploadFile = File(...),
     tmp_path = await _save_upload(file, MAX_ENROLL_BYTES)
     try:
         wav, sr = _load_or_400(tmp_path)
-        previous = _voiceprints._data.get(speaker_id)
+        previous = _voiceprints._read_disk().get(speaker_id)
         try:
             _voiceprints.enroll(speaker_id, wav, sr)
         except ValueError as e:
@@ -219,7 +220,7 @@ async def enroll(speaker_id: str = Form(...), file: UploadFile = File(...),
             "event": "voiceprint_overwritten",
             "speaker_id": speaker_id,
             "old_voiceprint_sha256": _voiceprint_hash(previous),
-            "new_voiceprint_sha256": _voiceprint_hash(_voiceprints._data[speaker_id]),
+            "new_voiceprint_sha256": _voiceprint_hash(_voiceprints._read_disk()[speaker_id]),
             "authenticated": token is not None,
         })
     return {
@@ -229,6 +230,7 @@ async def enroll(speaker_id: str = Form(...), file: UploadFile = File(...),
         "overwrote_existing": overwritten,
         "audit_logged": overwritten,
         "enroll_protected": token is not None,
+        "enrolled_speakers": _voiceprints.speaker_ids(),
     }
 
 
@@ -245,6 +247,7 @@ def _score_chunk(waveform, sample_rate, start_time, speaker_id, speaker_enrolled
     """
     if call_state is None:
         call_state = {}
+    speech_present = has_speech(waveform, sample_rate)
     acoustic = _detector.predict_detailed(waveform, sample_rate)
     speaker_scored = False
     if speaker_enrolled:
@@ -254,13 +257,14 @@ def _score_chunk(waveform, sample_rate, start_time, speaker_id, speaker_enrolled
             call_state["last_mismatch"] = live
     speaker_mismatch = call_state.get("last_mismatch", 0.0)
     fused = fuse(acoustic["spoof_prob"], speaker_mismatch, ctx["context_score"], _weights)
-    result = engine.update(fused["fused_score"])
+    result = engine.update(fused["fused_score"], speech_present=speech_present)
     return {
         "start_time": round(start_time, 2),
         "duration": round(len(waveform) / sample_rate, 2),
         **result,
         "acoustic_score": round(fused["acoustic_score"], 3),
         "speaker_mismatch": round(fused["speaker_mismatch"], 3),
+        "speech_present": speech_present,                       # False: no assessable audio; EMA untouched
         "speaker_scored": speaker_scored,                       # False: not assessed this window, value carried
         "speaker_carried": bool(speaker_enrolled and not speaker_scored and "last_mismatch" in call_state),
         "context_score": round(fused["context_score"], 3),
@@ -463,6 +467,7 @@ async def ws_live(ws: WebSocket):
         "speaker_id": speaker_id,
         "speaker_enrolled": speaker_enrolled,
         **_capability(speaker_enrolled),
+        "enrolled_speakers": _voiceprints.speaker_ids(),
         "context_reasons": ctx["reasons"],
         "chunk_seconds": DEFAULT_CHUNK_SECONDS,
     })

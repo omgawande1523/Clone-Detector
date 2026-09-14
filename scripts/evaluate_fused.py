@@ -18,8 +18,8 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.detector import get_detector                                   # noqa: E402
-from src.fusion import (weights_for_backend, FusionWeights,             # noqa: E402
-                        TRANSFORMER_WEIGHTS, HEURISTIC_WEIGHTS)
+from src.fusion import (caps_for_backend, SignalCaps,             # noqa: E402
+                        TRANSFORMER_CAPS, HEURISTIC_CAPS)
 from src.risk_engine import ALERT_THRESHOLD                             # noqa: E402
 from src.evaluation import (evaluate_asvspoof, evaluate_itw, metrics, print_table,  # noqa: E402
                             roundtrip_48k, fixture_items_for_roundtrip)
@@ -27,8 +27,14 @@ from src.evaluation import (evaluate_asvspoof, evaluate_itw, metrics, print_tabl
 FILES = "--files" in sys.argv
 
 
-def w(x: FusionWeights):
+def w(x: SignalCaps):
     return f"{x.acoustic:.2f}/{x.speaker:.2f}/{x.context:.2f}"
+
+
+def w2a_str(m):
+    if not m["windows_to_alert"]:
+        return "never"
+    return f"med {m['median_windows_to_alert']}"
 
 
 def line(backend, weights, res, m, note=""):
@@ -36,11 +42,11 @@ def line(backend, weights, res, m, note=""):
     return (f"  {backend:<12} {res['dataset']:<17} {w(weights):<15} "
             f"{m['genuine_fp']}/{m['n_genuine']:<4} {m['genuine_alert']}/{m['n_genuine']:<4} "
             f"{m['genuine_peak_max']:>8.3f} | {m['spoof_caught']}/{m['n_spoof']:<4} {m['spoof_alert']}/{m['n_spoof']:<4} "
-            f"{m['spoof_peak_med']:>8.3f} | {ps}{note}")
+            f"{m['spoof_peak_med']:>8.3f} | {len(m['windows_to_alert'])}/{m['n_spoof']:<3} {w2a_str(m):<7} | {ps}{note}")
 
 
 hdr = (f"  {'backend':<12} {'dataset':<17} {'weights a/s/c':<15} "
-       f"{'gen HI+':<6} {'gen ALT':<6} {'gen max':>8} | {'spf HI+':<6} {'spf ALT':<6} {'spf med':>8} | per system HIGH+")
+       f"{'gen HI+':<6} {'gen ALT':<6} {'gen max':>8} | {'spf HI+':<6} {'spf ALT':<6} {'spf med':>8} | {'alertd':<5} {'w2alrt':<7} | per system HIGH+")
 
 print("=" * 118)
 print(f"FULL FUSED PIPELINE  (acoustic + speaker vs enrolled print + neutral context -> EMA -> level; "
@@ -56,7 +62,7 @@ for backend in ("heuristic", "transformer"):
     except Exception as e:
         print(f"  {backend:<12} SKIPPED: {e}")
         continue
-    weights = weights_for_backend(det.backend)
+    weights = caps_for_backend(det.backend)
     for evaluator in (evaluate_asvspoof, evaluate_itw):
         t0 = time.time()
         res = evaluator(det, weights)
@@ -71,11 +77,11 @@ print("=" * 118)
 print(hdr)
 print("  " + "-" * 116)
 det = get_detector("heuristic")
-old = FusionWeights(0.45, 0.45, 0.10)
+old = SignalCaps(0.45, 0.45, 0.10)
 for evaluator in (evaluate_asvspoof, evaluate_itw):
-    r_old, r_new = evaluator(det, old), evaluator(det, HEURISTIC_WEIGHTS)
+    r_old, r_new = evaluator(det, old), evaluator(det, HEURISTIC_CAPS)
     print(line("heuristic", old, r_old, metrics(r_old), "   <- old"))
-    print(line("heuristic", HEURISTIC_WEIGHTS, r_new, metrics(r_new), "   <- new"))
+    print(line("heuristic", HEURISTIC_CAPS, r_new, metrics(r_new), "   <- new"))
     # per-clip delta
     delta = [(a["utt"], a["peak"], b["peak"]) for a, b in zip(r_old["genuine"] + r_old["spoof"], r_new["genuine"] + r_new["spoof"])
              if abs(a["peak"] - b["peak"]) > 1e-9]
@@ -114,12 +120,35 @@ for backend in ("heuristic", "transformer"):
         det = get_detector(backend)
     except Exception:
         continue
-    rows, m = roundtrip_48k(det, weights_for_backend(det.backend), fixture_items_for_roundtrip())
+    rows, m = roundtrip_48k(det, caps_for_backend(det.backend), fixture_items_for_roundtrip())
     changed = [r for r in rows if r["level0"] != r["level1"] or r["alert0"] != r["alert1"]]
     print(f"  {backend:<12} {m['n']} clips: same level {m['same_level']}/{m['n']}, same alert {m['same_alert']}/{m['n']}, "
           f"max |delta peak| {m['max_delta_peak']:.3f}, max |delta acoustic| {m['max_delta_acoustic']:.3f}")
     for r in changed:
         print(f"      CHANGED {r['label']}: {r['level0']} {r['peak0']:.3f} -> {r['level1']} {r['peak1']:.3f}")
+
+# --- windows-to-alert: how fast does it catch a clone? ----------------
+print(chr(10) + "=" * 118)
+print("WINDOWS TO ALERT (5 s windows): windows from the first SCORED window to the sustained alert, per spoof clip")
+print("=" * 118)
+for (backend, dataset), (res, m, weights) in results.items():
+    rows = [r for r in res["spoof"] if r["windows_to_alert"] is not None]
+    never = len(res["spoof"]) - len(rows)
+    med = m["median_windows_to_alert"]
+    head = f"  {backend:<12} {dataset:<17} alerted {len(rows)}/{len(res['spoof'])}"
+    if med is not None:
+        head += f"   median {med} window(s) = {(med + 1) * 5}s of audio"
+    if never:
+        head += f"   never: {never}"
+    print(head)
+    if rows:
+        print("      per clip: " + "  ".join(
+            f"{r['system']}/{r['utt'][:12]}:{r['windows_to_alert']}"
+            for r in sorted(rows, key=lambda x: x["system"])))
+    short = [r for r in res["spoof"] if r["windows_to_alert"] is None and r["chunks"] < 2]
+    if short:
+        print(f"      ({len(short)} clip(s) shorter than the 2-window sustain rule needs: "
+              + ", ".join(f"{r['utt'][:12]}={r['secs']:.1f}s" for r in short) + ")")
 
 if FILES:
     for (backend, dataset), (res, m, weights) in results.items():

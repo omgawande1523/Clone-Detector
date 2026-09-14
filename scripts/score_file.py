@@ -15,7 +15,7 @@ import soundfile as sf
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.audio_pipeline import load_mono, resample_to, DEFAULT_CHUNK_SECONDS  # noqa: E402
 from src.detector import HeuristicDetector, TransformerDetector         # noqa: E402
-from src.fusion import weights_for_backend                              # noqa: E402
+from src.fusion import caps_for_backend                              # noqa: E402
 from src.evaluation import run_call, SR                                  # noqa: E402
 from src.speaker_consistency import compute_voiceprint, MIN_SPEECH_SECONDS, _preprocess  # noqa: E402
 
@@ -54,7 +54,7 @@ print(f"\n  whole-file transformer spoof_prob : {T.predict(wav, SR):.3f}   (0 = 
 print(f"  whole-file heuristic  spoof_prob : {H.predict(wav, SR):.3f}")
 
 for det in (T, H):
-    w = weights_for_backend(det.backend)
+    w = caps_for_backend(det.backend)
     summary, rows, scored = run_call(wav, reference, det, w)
     print(f"\n  {det.backend.upper()} backend, weights a/s/c {w.acoustic:.2f}/{w.speaker:.2f}/{w.context:.2f}")
     print(f"    {'#':>2} {'t':>5} {'acoustic':>8} {'speaker':>8} {'context':>7} {'risk':>6} {'level':<9} alert")

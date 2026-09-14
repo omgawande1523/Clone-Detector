@@ -31,7 +31,7 @@ from src.detector import get_detector
 from src.risk_engine import RiskEngine
 from src.speaker_consistency import compute_voiceprint, mismatch_between
 from src.context_engine import score_context
-from src.fusion import fuse, weights_for_backend
+from src.fusion import fuse, caps_for_backend
 from src.audit_log import AuditLog
 
 
@@ -70,7 +70,7 @@ def synth_voice(duration, sr, f0=140.0, jitter_amt=0.02, smooth=False):
 
 def run_case(label, wav, sr, detector, reference_print=None, ctx=None, audit=None):
     print(f"\n=== {label} ===")
-    weights = weights_for_backend(detector.backend)   # same rule as the API
+    weights = caps_for_backend(detector.backend)   # same rule as the API
     engine = RiskEngine()
     ctx = ctx or {"context_score": 0.0, "reasons": []}
     chunk_len = int(sr * 5.0)
@@ -102,7 +102,7 @@ def run_case(label, wav, sr, detector, reference_print=None, ctx=None, audit=Non
 
 def main():
     detector = get_detector("heuristic")
-    print(f"Backend: {detector.name}  (fusion weights follow the backend: {weights_for_backend(detector.backend)})")
+    print(f"Backend: {detector.name}  (fusion weights follow the backend: {caps_for_backend(detector.backend)})")
 
     genuine = synth_voice(DURATION, SR, smooth=False)
     robotic = synth_voice(DURATION, SR, smooth=True)

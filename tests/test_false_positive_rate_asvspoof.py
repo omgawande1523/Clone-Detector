@@ -23,7 +23,7 @@ import numpy as np
 import pytest
 
 from src.detector import HeuristicDetector
-from src.fusion import weights_for_backend
+from src.fusion import caps_for_backend
 from src.risk_engine import ALERT_THRESHOLD
 from src.evaluation import evaluate_asvspoof, metrics, print_table, ASV
 
@@ -34,7 +34,7 @@ pytestmark = pytest.mark.skipif(
 @pytest.fixture(scope="module")
 def batch():
     det = HeuristicDetector()
-    return evaluate_asvspoof(det, weights_for_backend(det.backend))
+    return evaluate_asvspoof(det, caps_for_backend(det.backend))
 
 
 def test_batch_uses_several_distinct_real_speakers(batch):

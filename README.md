@@ -81,7 +81,7 @@ pip install -r requirements-dev.txt
 pytest -q
 ```
 
-175 tests. The suite is built around the bugs that actually shipped, so
+212 tests. The suite is built around the bugs that actually shipped, so
 each of these would fail if the bug came back:
 
 | test file | pins |
@@ -95,6 +95,11 @@ each of these would fail if the bug came back:
 | `test_api.py` | error paths return 4xx with a readable message, never a 500 |
 | `test_transformer_backend.py` | wav2vec2 backend on both fixture sets, cross- and in-domain reported separately |
 | `test_fused_modes.py` | full fused pipeline per mode: zero FP in both; targeted-clone recall floor in transformer mode; heuristic acoustic weight is exactly zero |
+| `test_fusion_noisy_or.py` | one confident signal alone must be able to alert; context alone must not; caps respected exactly; monotonic |
+| `test_risk_engine_attack_release.py` | a rising score crosses in <= 2 windows; a falling one decays slowly; a single spike still does not alert |
+| `test_ema_warmup.py` | a no-speech lead-in costs no windows; alert-level evidence is always scored |
+| `test_voiceprint_store_concurrency.py` | two stores over one file must not clobber each other's enrolments |
+| `test_live_clone_replay.py` | the captured live session where a 99.6%-confident clone never alerted must now alert by window 3 |
 | `test_quiet_window_carry_forward.py` | a near-silent window after a high-mismatch window carries the mismatch forward and is flagged not-assessed; the store is locked and writes atomically |
 | `test_web_alert_sound.py` | static smoke check: the dashboard beep is transition-guarded, try/catch-wrapped, and never fired per window |
 | `test_enroll_auth.py` | with ENROLL_TOKEN set, /enroll needs the header (401 otherwise); unset is open and /health says so; a re-enrolment is hash-chained |
@@ -143,19 +148,63 @@ risk-keyword detection in a transcript, combined transparently (not a
 black box) so a compliance reviewer can see exactly why a call was
 flagged.
 
-**Fusion (`fusion.py`)** — weighted combination of the three
-(acoustic 0.45 / speaker 0.45 / context 0.10), with the dominant
-contributing signal surfaced for an explainable alert message. Swap
-the fixed weights for a trained logistic-regression meta-model once
-you have labeled call outcomes.
+**Fusion (`fusion.py`)** — **noisy-OR over capped evidence**, with the
+largest single contribution surfaced for an explainable alert message:
 
-The weights obey a rule the tests enforce: acoustic alone and speaker
-mismatch alone must each be able to cross the alert threshold on
-their own merits, and context alone must never be able to — a call
+```
+contribution_i = cap_i x score_i
+fused          = 1 - PRODUCT(1 - contribution_i)
+```
+
+Caps are the most fused risk each signal can produce alone —
+transformer mode 0.90 / 0.90 / 0.30 (acoustic / speaker / context),
+heuristic mode **0.00** / 0.90 / 0.30. They are not weights and do not
+sum to 1.
+
+| case | arithmetic | fused |
+|---|---|---|
+| acoustic 1.0 alone | `1 - 0.10` | **0.90** — alerts |
+| speaker 1.0 alone | `1 - 0.10` | **0.90** — alerts |
+| context 1.0 alone | `1 - 0.70` | **0.30** — below 0.40, cannot alert |
+| acoustic + speaker maxed | `1 - 0.10 x 0.10` | 0.99 |
+| all three maxed | `1 - 0.10 x 0.10 x 0.70` | 0.993 |
+| the captured clone, acoustic 0.996 | `1 - (1 - 0.90 x 0.996)` | **0.896** |
+| genuine speech, acoustic 0.007 | — | 0.006 |
+
+**This replaced a weighted average, and that is the point.** A
+weighted mean structurally caps a single signal at its own weight.
+With acoustic weighted 0.45, a detector that was 100% certain the
+audio was synthetic produced 0.448 against a 0.40 threshold — 12% of
+headroom — and on a captured live call
+(`fixtures/live_clone_session/`) four consecutive windows scored
+0.984–0.996 synthetic and the system never even reached HIGH. No
+choice of weights fixes that while the rule is a mean. It matters
+specifically for the threat this project exists for: a clone of the
+enrolled person passes the voiceprint check by design (measured
+median mismatch 0.00), so on that attack the acoustic signal is the
+*only* live evidence, and a rule that cannot let one signal speak
+alone cannot detect it.
+
+The invariants the tests enforce are unchanged: acoustic alone and
+speaker mismatch alone must each be able to cross the alert threshold
+on their own merits, and context alone must never be able to — a call
 with suspicious metadata is not evidence that anyone's voice was
-cloned. An earlier version had weights of 0.55/0.30/0.15 against a
-threshold of 0.60, which made it arithmetically impossible for ANY
-single signal to raise an alert.
+cloned. An even earlier version had weights of 0.55/0.30/0.15 against
+a threshold of 0.60, which made it arithmetically impossible for ANY
+single signal to raise an alert. Both bugs are the same shape: the
+combination rule silently deciding no single signal is ever enough.
+Upgrade path: fit the caps (or a small meta-model) to real labelled
+call outcomes, preserving those invariants.
+
+**Risk engine (`risk_engine.py`)** — asymmetric EMA: **attack 0.60**
+when the score is rising, **release 0.20** when it is falling. React
+fast to danger; do not let one quiet window clear a call that already
+looked bad. A single symmetric alpha of 0.35 was the other half of
+the same failure — even once fusion could produce a high score, the
+EMA needed six windows to approach it. The sustain rule counts
+windows whose *own* score is above threshold (not the EMA, which with
+a slow release would let one spike look sustained), so a single spike
+still cannot alert.
 
 ## The audit trail — why "blockchain" isn't just a buzzword here
 
@@ -255,11 +304,11 @@ UI say which mode produced the result.
 
 | | **Transformer mode** (`DETECTOR_BACKEND=transformer`) | **Heuristic-only mode** (default, no download) |
 |---|---|---|
-| fusion weights (acoustic / speaker / context) | 0.45 / 0.45 / 0.10 | **0.00** / 0.90 / 0.10 |
+| signal caps (acoustic / speaker / context) | 0.90 / 0.90 / 0.30 | **0.00** / 0.90 / 0.30 |
 | acoustic signal | wav2vec2 spoof classifier, validated (AUC 0.81 cross-domain, 1.00 in-domain) | measured AUC 0.25 / 0.14 — below chance, so weight is **exactly zero** |
 | defence against an impostor (different person) | yes — speaker layer | yes — speaker layer |
-| defence against a **clone of the enrolled speaker** | yes — acoustic layer: 8/12 ASVspoof clones, 7/7 In-the-Wild clones reach HIGH+ | **effectively none** — 0/12 ASVspoof clones (the clone passes the voiceprint, median mismatch 0.00, and nothing else can fire); 2/7 In-the-Wild clones only because those happen to mismatch their target's voiceprint (median 0.17), which is the speaker layer catching a poor clone, not the acoustic layer catching a clone |
-| false positives on genuine multi-speaker calls | 0/16 utterances, 0/8 calls (ASVspoof); 0/7 (In-the-Wild) | 0/16, 0/8; 0/7 |
+| defence against a **clone of the enrolled speaker** | yes — acoustic layer: 8/12 ASVspoof clones, 7/7 In-the-Wild clones reach HIGH+, at a median fused score of 0.86–0.91 | **effectively none** — 0/12 ASVspoof clones (the clone passes the voiceprint, median mismatch 0.00, and nothing else can fire); 2/7 In-the-Wild clones only because those happen to mismatch their target's voiceprint (median 0.17), which is the speaker layer catching a poor clone, not the acoustic layer catching a clone |
+| false positives on genuine multi-speaker calls | **0**/16 utterances, 0/8 calls (ASVspoof); **0**/7 (In-the-Wild); worst genuine score 0.004 | **0**/16, 0/8; **0**/7 |
 | what it is | **the real system** | an offline fallback with a structurally reduced capability |
 
 **A call that cannot alert says so.** In heuristic mode with no
@@ -317,6 +366,11 @@ unknown, so treat it as an upper bound). The two are reported
 separately on purpose — spoof detection is known to generalise poorly
 across attack types, and one averaged number would hide that.
 
+The table below is per-clip acoustic score at a 0.5 decision
+threshold — the detector in isolation. The fused-pipeline figures
+(what the system actually reports) are in the two-modes table above
+and reproduced by `scripts/evaluate_fused.py`.
+
 | backend | dataset | n (bona/spoof) | bonafide max | false-pos | spoof recall | AUC |
 |---|---|---|---|---|---|---|
 | heuristic | ASVspoof 2019 LA (cross-domain) | 48 / 12 | 0.000 | 0% | **0%** | 0.25 |
@@ -332,6 +386,23 @@ download once, ~0.2–0.4 s per 5 s chunk on a laptop CPU.
 `tests/test_transformer_backend.py` re-measures this (skipped unless
 the weights are cached locally).
 
+**Detection speed — windows to alert.** A sustained alert needs two
+consecutive windows whose own fused score is above threshold, so the
+floor is 2 windows = 10 s of clone audio. Measured:
+
+| case | before | after |
+|---|---|---|
+| captured live session (`fixtures/live_clone_session/`, clone starts at window 1) | **never alerted** (6 windows, peak EMA 0.367, MEDIUM) | **alert at window 2** — one window after the clone starts, 10 s of clone audio |
+| streamed clone, `live_latency_probe.py --clone` (clone from window 0) | alert at window 1 | alert at window 1, **7.9 s** into the call |
+
+The fixture sets cannot measure this well: 11 of 12 ASVspoof spoof
+clips and 7 of 7 In-the-Wild spoof clips are single utterances shorter
+than the 10 s two windows need, so only one fixture clip
+(`LA_D_3876919`, 8.7 s) is long enough to alert at all. That is a
+property of the corpora, not of the detector — the per-window *level*
+figures above are the ones the fixtures can support, and the live
+session and probe are where windows-to-alert is measured.
+
 **Sample rate — the path an uploaded phone recording actually takes.**
 Every committed fixture is 16 kHz, so the figures above never
 exercised resampling. The old resampler (`np.interp`, no anti-aliasing
@@ -346,11 +417,12 @@ clip upsampled to 48 kHz, resampled back by the pipeline, re-scored:
 | backend | clips | same level | same alert | max Δ peak | max Δ acoustic |
 |---|---|---|---|---|---|
 | heuristic | 42 | 42/42 | 42/42 | 0.017 | 0.015 |
-| transformer | 42 | **41/42** | 42/42 | 0.042 | 0.093 |
+| transformer | 42 | **42/42** | 42/42 | 0.083 | 0.093 |
 
-The one change is a borderline A03 clip (`LA_D_2169320`: HIGH 0.429 →
-MEDIUM 0.388, acoustic 0.983 → 0.890) sitting on the 0.40 boundary; no
-alert changed. `tests/test_resampling.py` pins that a 12 kHz tone does
+Every verdict now survives the round trip. (Under the old weighted
+average one borderline A03 clip crossed the 0.40 boundary either way;
+with noisy-OR the same clip sits at 0.86 and the same ±0.09 acoustic
+wobble no longer changes its level.) `tests/test_resampling.py` pins that a 12 kHz tone does
 not alias into the band and that a 48 kHz round trip keeps its verdict.
 
 ## Switching to the real ML model
@@ -398,12 +470,27 @@ recording and is what we test fixture files against. `WS /ws/live`
 takes the call as it happens: the dashboard's "Live call (microphone)"
 mode captures 5-second segments and each one is scored the moment it
 arrives — the gauge moves while the caller is still talking. Measured
-window-to-result latency is typically 0.3–0.4 s (up to ~0.75 s on
+window-to-result latency is typically 0.3–0.5 s (up to ~0.75 s on
 some windows on a laptop CPU) and does not accumulate over the
 call (`scripts/live_latency_probe.py` prints the per-window timestamps).
-On a clone of the enrolled speaker the alert fires at the second window,
-under 8 seconds into the call, and the audit record is written at that
-moment, not when the call ends.
+Two different numbers, and they are worth keeping apart: *latency per
+window* is how long scoring one window takes (0.3–0.5 s), and *windows
+to alert* is how much audio it takes to be sure. On a streamed clone
+of the enrolled speaker, measured with
+`scripts/live_latency_probe.py --clone`, the alert fires at the second
+window — **7.9 seconds into the call** — and the audit record is
+written at that moment, not when the call ends. The floor is two
+windows (10 s of clone audio) because a sustained alert deliberately
+requires the evidence to persist; a single window is reported as
+"crossed but did not sustain" rather than as an alert.
+
+Until recently this answer was wrong for the case that matters most.
+A clone of the enrolled person passes the voiceprint check, so the
+acoustic detector is the only live signal, and the old weighted
+average capped it at 0.448 against a 0.40 threshold — on a captured
+call the model was 99.6% certain for four consecutive windows and the
+system never alerted. `fixtures/live_clone_session/` is that call,
+kept as a regression test.
 
 **"How will you actually listen to the calls?"**
 This targets enterprise call centers, banks, and government
@@ -483,6 +570,19 @@ still being useful for compliance.
   against (`pip freeze`, 2026-09-14); the voiceprint store writes under
   a lock via temp-file + `os.replace`, so a crash mid-enrol cannot
   truncate `voiceprints.json`.
+- **A04 (waveform concatenation) still evades the detector entirely.**
+  Recall rose everywhere else — ASVspoof clones reaching HIGH+ hold at
+  8/12 with the median fused score up from 0.435 to 0.856, and
+  In-the-Wild at 7/7, median 0.912 — but both A04 clips still score
+  0.004, indistinguishable from genuine. A04 splices real recorded
+  speech units, so there is no synthesis artefact to find. This is a
+  known generalisation gap, not a tuning problem.
+- **Windows-to-alert has a hard floor of two windows (10 s of clone
+  audio)** because a sustained alert requires the evidence to persist
+  across consecutive windows. Shorter exposure is reported as
+  "crossed but did not sustain", which is visible in the UI but is not
+  an alert. Most fixture clips are shorter than that, so the fixture
+  sets measure per-window *level*, not alert timing.
 - **Enrolment is the root of trust and is only token-guarded.** With
   `ENROLL_TOKEN` unset anyone who can reach the port can overwrite a
   voiceprint (the overwrite is audited, not prevented). Production needs

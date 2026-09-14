@@ -35,6 +35,7 @@ decision band.
 import json
 import os
 import threading
+import time
 import numpy as np
 
 # Cosine-similarity decision band, used to turn a raw similarity into
@@ -149,6 +150,62 @@ def mismatch_between(print_a, print_b) -> float:
     return mismatch_from_similarity(cosine_similarity(print_a, print_b))
 
 
+_PATH_LOCKS = {}
+_PATH_LOCKS_GUARD = threading.Lock()
+
+
+def _path_lock(path: str) -> threading.Lock:
+    key = os.path.abspath(path)
+    with _PATH_LOCKS_GUARD:
+        return _PATH_LOCKS.setdefault(key, threading.Lock())
+
+
+class _FileLock:
+    """Cross-PROCESS mutual exclusion for the read-merge-write, via an
+    exclusively-created lock file.
+
+    The threading lock above only covers one process, and the failure
+    this guards against was two server processes: a restart while
+    another was still running dropped an enrolment. Deliberately small
+    — no dependency, a stale lock older than `stale` seconds is broken
+    so a crashed process cannot wedge enrolment forever."""
+
+    def __init__(self, path: str, timeout: float = 5.0, stale: float = 30.0):
+        self.lockfile = path + ".lock"
+        self.timeout = timeout
+        self.stale = stale
+        self.fd = None
+
+    def __enter__(self):
+        deadline = time.time() + self.timeout
+        while True:
+            try:
+                self.fd = os.open(self.lockfile, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                return self
+            except FileExistsError:
+                try:
+                    if time.time() - os.path.getmtime(self.lockfile) > self.stale:
+                        os.remove(self.lockfile)        # crashed holder
+                        continue
+                except OSError:
+                    pass
+                if time.time() > deadline:
+                    # Never block enrolment forever; proceed unlocked and
+                    # rely on the merge to limit the damage.
+                    return self
+                time.sleep(0.02)
+
+    def __exit__(self, *exc):
+        if self.fd is not None:
+            os.close(self.fd)
+            try:
+                os.remove(self.lockfile)
+            except OSError:
+                pass
+            self.fd = None
+        return False
+
+
 class VoiceprintStore:
     """Tiny local JSON-backed store — swap for a real DB in production.
     Keyed by speaker_id (e.g. "ceo", "cust_00123").
@@ -165,16 +222,75 @@ class VoiceprintStore:
 
     def __init__(self, path: str = None):
         self.path = path or self.DEFAULT_PATH
-        self._lock = threading.Lock()
+        # One lock per FILE, shared by every store in this process, so
+        # two instances over the same path exclude each other.
+        self._lock = _path_lock(self.path)
         self._data = {}
-        if os.path.exists(self.path):
+        self._mtime = None
+        self._reload_if_changed()
+
+    # ---- disk is the source of truth -------------------------------
+    #
+    # This store used to read the file once at construction and write
+    # back its own in-memory dict. Two server processes (a restart
+    # while another was running) each held a stale snapshot, and the
+    # second write dropped whatever the first had added: an enrolment
+    # for "ceo" was made, worked, and then vanished when an older
+    # process wrote. The atomic write added earlier made the file safe
+    # against CORRUPTION, not against being CLOBBERED.
+    #
+    # enroll() now re-reads and merges under the lock, and reads
+    # refresh the cache whenever the file's mtime has moved, so a
+    # long-running server sees enrolments made elsewhere.
+
+    def _read_disk(self) -> dict:
+        if not os.path.exists(self.path):
+            return {}
+        try:
+            with open(self.path) as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+        except (json.JSONDecodeError, OSError):
+            # A corrupt store must not take the whole service down;
+            # start clean and let the operator re-enroll.
+            return {}
+
+    def _reload_if_changed(self):
+        try:
+            mtime = os.path.getmtime(self.path)
+        except OSError:
+            mtime = None
+        if mtime != self._mtime:
+            self._data = self._read_disk()
+            self._mtime = mtime
+
+    def _write_atomic(self, data: dict):
+        tmp = f"{self.path}.{os.getpid()}.{threading.get_ident()}.tmp"
+        with open(tmp, "w") as f:
+            json.dump(data, f)
+            f.flush()
+            os.fsync(f.fileno())
+        # On Windows os.replace fails if another process/thread has the
+        # target open for reading at that instant; retry briefly.
+        for attempt in range(10):
             try:
-                with open(self.path) as f:
-                    self._data = json.load(f)
-            except (json.JSONDecodeError, OSError):
-                # A corrupt store must not take the whole service down;
-                # start clean and let the operator re-enroll.
-                self._data = {}
+                os.replace(tmp, self.path)
+                break
+            except PermissionError:
+                if attempt == 9:
+                    os.remove(tmp)
+                    raise
+                time.sleep(0.02)
+        try:
+            self._mtime = os.path.getmtime(self.path)
+        except OSError:
+            self._mtime = None
+
+    def speaker_ids(self) -> list:
+        """Who is enrolled right now, according to disk."""
+        with self._lock:
+            self._reload_if_changed()
+            return sorted(self._data)
 
     def enroll(self, speaker_id: str, wav: np.ndarray, sr: int):
         voiceprint = compute_voiceprint(wav, sr)
@@ -183,30 +299,33 @@ class VoiceprintStore:
                 "Enrollment audio contains too little speech to build a "
                 "voiceprint — provide 10-20 seconds of clean speech."
             )
-        # Read-modify-write under a lock (AuditLog already had one; this
-        # store did not), and an atomic replace so a crash mid-write
+        # Read-modify-write under a lock, against DISK rather than the
+        # in-memory snapshot, so a concurrent process's enrolments are
+        # merged instead of dropped. Atomic replace so a crash mid-write
         # cannot leave a truncated voiceprints.json behind.
-        with self._lock:
-            self._data[speaker_id] = voiceprint
-            tmp = f"{self.path}.{os.getpid()}.tmp"
-            with open(tmp, "w") as f:
-                json.dump(self._data, f)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(tmp, self.path)
+        with self._lock, _FileLock(self.path):
+            merged = self._read_disk()
+            merged[speaker_id] = voiceprint
+            self._write_atomic(merged)
+            self._data = merged
 
     def has(self, speaker_id: str) -> bool:
-        return speaker_id in self._data
+        with self._lock:
+            self._reload_if_changed()
+            return speaker_id in self._data
 
     def similarity(self, speaker_id: str, wav: np.ndarray, sr: int):
         """Raw cosine similarity against the enrolled print, or None if
         we cannot say (speaker not enrolled / not enough speech)."""
-        if speaker_id not in self._data:
+        with self._lock:
+            self._reload_if_changed()
+            reference = self._data.get(speaker_id)
+        if reference is None:
             return None
         live_print = compute_voiceprint(wav, sr)
         if live_print is None:
             return None
-        return cosine_similarity(self._data[speaker_id], live_print)
+        return cosine_similarity(reference, live_print)
 
     def mismatch_score(self, speaker_id: str, wav: np.ndarray, sr: int):
         """Returns a RISK score in [0, 1] — 0 means the voice matches

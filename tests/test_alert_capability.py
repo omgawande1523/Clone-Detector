@@ -1,10 +1,10 @@
 """Regression tests: the system must never be SILENTLY incapable of
 alerting.
 
-In heuristic mode the weights are acoustic 0.00 / speaker 0.90 /
-context 0.10. With no voiceprint enrolled, mismatch_score() returns a
-neutral 0.0, so the highest fused score any window can reach is 0.10 —
-against an alert threshold of 0.40. A fresh clone-and-run with no
+In heuristic mode the caps are acoustic 0.00 / speaker 0.90 /
+context 0.30. With no voiceprint enrolled the speaker layer has no
+opinion, so the highest fused score any window can reach is the
+context cap, 0.30 — against an alert threshold of 0.40. A fresh clone-and-run with no
 enrolment could never fire, and nothing said so. check_alertable()
 did not catch it because it reports weight capacity, not runtime
 state. reachable_max() reports runtime state; /health, /analyze and
@@ -17,7 +17,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.fusion import (reachable_max, capability_warning,
-                        HEURISTIC_WEIGHTS, TRANSFORMER_WEIGHTS)
+                        HEURISTIC_CAPS, TRANSFORMER_CAPS)
 from src.risk_engine import ALERT_THRESHOLD
 
 SAMPLES = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "samples")
@@ -29,32 +29,34 @@ ENROLL_A = os.path.join(SAMPLES, "enroll_speakerA.wav")
 
 def test_heuristic_without_enrolment_can_never_alert():
     """THE dead configuration."""
-    cap = reachable_max(HEURISTIC_WEIGHTS, speaker_enrolled=False)
+    cap = reachable_max(HEURISTIC_CAPS, speaker_enrolled=False)
     assert cap["can_ever_alert"] is False
-    assert cap["max_fused"] == pytest.approx(0.10)
+    assert cap["max_fused"] == pytest.approx(HEURISTIC_CAPS.context)
     assert cap["max_fused"] < ALERT_THRESHOLD
 
 
 def test_heuristic_with_enrolment_can_alert():
-    cap = reachable_max(HEURISTIC_WEIGHTS, speaker_enrolled=True)
+    cap = reachable_max(HEURISTIC_CAPS, speaker_enrolled=True)
     assert cap["can_ever_alert"] is True
-    assert cap["max_fused"] == pytest.approx(1.0)
+    # noisy-OR of speaker 0.90 and context 0.30
+    assert cap["max_fused"] == pytest.approx(1 - 0.10 * 0.70)
 
 
 def test_transformer_without_enrolment_can_alert():
-    cap = reachable_max(TRANSFORMER_WEIGHTS, speaker_enrolled=False)
+    cap = reachable_max(TRANSFORMER_CAPS, speaker_enrolled=False)
     assert cap["can_ever_alert"] is True
-    assert cap["max_fused"] == pytest.approx(0.55)
+    # noisy-OR of acoustic 0.90 and context 0.30
+    assert cap["max_fused"] == pytest.approx(1 - 0.10 * 0.70)
 
 
 def test_warning_text_names_the_fix():
-    w = capability_warning("heuristic", HEURISTIC_WEIGHTS, speaker_enrolled=False)
+    w = capability_warning("heuristic", HEURISTIC_CAPS, speaker_enrolled=False)
     assert w is not None
     assert "CANNOT raise an alert" in w
     assert "enrol" in w.lower()
     assert "DETECTOR_BACKEND=transformer" in w
-    assert capability_warning("heuristic", HEURISTIC_WEIGHTS, speaker_enrolled=True) is None
-    assert capability_warning("transformer", TRANSFORMER_WEIGHTS, speaker_enrolled=False) is None
+    assert capability_warning("heuristic", HEURISTIC_CAPS, speaker_enrolled=True) is None
+    assert capability_warning("transformer", TRANSFORMER_CAPS, speaker_enrolled=False) is None
 
 
 # --------------------------------------------------------------- API
@@ -75,9 +77,9 @@ def test_health_reports_live_capability_for_both_cases(client):
     cap = d["live_capability"]
     assert set(cap) >= {"enrolled", "unenrolled", "enrolled_speakers"}
     assert cap["enrolled"]["can_ever_alert"] is True
-    # what the unenrolled case says must match the loaded weights
-    w = d["detection_mode"]["weights"]
-    expected = (w["acoustic"] + w["context"]) >= d["alert_threshold"]
+    # what the unenrolled case says must match the loaded caps
+    c = d["detection_mode"]["caps"]
+    expected = (1 - (1 - c["acoustic"]) * (1 - c["context"])) >= d["alert_threshold"]
     assert cap["unenrolled"]["can_ever_alert"] is expected
 
 
@@ -91,7 +93,7 @@ def test_analyze_in_dead_configuration_returns_the_warning(client):
         d = client.post("/analyze", data={"speaker_id": "nobody"}, files={"file": ("g.wav", f, "audio/wav")}).json()
     assert d["speaker_enrolled"] is False
     assert d["can_ever_alert"] is False
-    assert d["max_reachable_score"] == pytest.approx(0.10)
+    assert d["max_reachable_score"] == pytest.approx(HEURISTIC_CAPS.context)
     assert "CANNOT raise an alert" in d["capability_warning"]
 
 

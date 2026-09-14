@@ -11,8 +11,8 @@ import os
 import numpy as np
 import pytest
 
-from src.fusion import (weights_for_backend, FusionWeights,
-                        TRANSFORMER_WEIGHTS, HEURISTIC_WEIGHTS)
+from src.fusion import (caps_for_backend, SignalCaps,
+                        TRANSFORMER_CAPS, HEURISTIC_CAPS)
 from src.evaluation import evaluate_asvspoof, evaluate_itw, metrics, ASV, ITW
 
 pytestmark = pytest.mark.skipif(
@@ -43,7 +43,7 @@ def heuristic():
 
 
 def test_heuristic_mode_zero_fp_on_both_sets(heuristic):
-    w = weights_for_backend(heuristic.backend)
+    w = caps_for_backend(heuristic.backend)
     for res in (evaluate_asvspoof(heuristic, w), evaluate_itw(heuristic, w)):
         m = metrics(res)
         print(f"\n  heuristic / {res['dataset']}: genuine HIGH+ {m['genuine_fp']}/{m['n_genuine']}, "
@@ -56,9 +56,9 @@ def test_zeroing_heuristic_acoustic_cannot_raise_genuine_risk(heuristic):
     """Removing a weight from a signal that is ~0 on bonafide must not
     make any genuine clip score higher. (It can lower or raise clone
     scores; that is measured, not asserted.)"""
-    old = FusionWeights(0.45, 0.45, 0.10)
+    old = SignalCaps(0.45, 0.45, 0.10)
     a = evaluate_asvspoof(heuristic, old)
-    b = evaluate_asvspoof(heuristic, HEURISTIC_WEIGHTS)
+    b = evaluate_asvspoof(heuristic, HEURISTIC_CAPS)
     changed = 0
     for ga, gb in zip(a["genuine"], b["genuine"]):
         assert ga["utt"] == gb["utt"]
@@ -79,17 +79,17 @@ def transformer():
 
 @pytest.fixture(scope="module")
 def t_asv(transformer):
-    return evaluate_asvspoof(transformer, TRANSFORMER_WEIGHTS)
+    return evaluate_asvspoof(transformer, TRANSFORMER_CAPS)
 
 
 @pytest.fixture(scope="module")
 def t_itw(transformer):
-    return evaluate_itw(transformer, TRANSFORMER_WEIGHTS)
+    return evaluate_itw(transformer, TRANSFORMER_CAPS)
 
 
 @needs_transformer
 def test_transformer_mode_zero_fp_on_both_sets(transformer, t_asv, t_itw):
-    assert weights_for_backend(transformer.backend) is TRANSFORMER_WEIGHTS
+    assert caps_for_backend(transformer.backend) is TRANSFORMER_CAPS
     for res in (t_asv, t_itw):
         m = metrics(res)
         print(f"\n  transformer / {res['dataset']}: genuine HIGH+ {m['genuine_fp']}/{m['n_genuine']} "
@@ -118,7 +118,7 @@ def test_transformer_mode_targeted_clone_recall(t_asv, t_itw):
 @needs_transformer
 def test_transformer_mode_beats_heuristic_mode_on_clones(t_asv, heuristic):
     t = metrics(t_asv)["spoof_caught"]
-    h = metrics(evaluate_asvspoof(heuristic, HEURISTIC_WEIGHTS))["spoof_caught"]
+    h = metrics(evaluate_asvspoof(heuristic, HEURISTIC_CAPS))["spoof_caught"]
     print(f"\n  targeted clones caught: heuristic mode {h}/12, transformer mode {t}/12")
     assert t > h
 
