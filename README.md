@@ -258,7 +258,7 @@ UI say which mode produced the result.
 | fusion weights (acoustic / speaker / context) | 0.45 / 0.45 / 0.10 | **0.00** / 0.90 / 0.10 |
 | acoustic signal | wav2vec2 spoof classifier, validated (AUC 0.81 cross-domain, 1.00 in-domain) | measured AUC 0.25 / 0.14 — below chance, so weight is **exactly zero** |
 | defence against an impostor (different person) | yes — speaker layer | yes — speaker layer |
-| defence against a **clone of the enrolled speaker** | yes — acoustic layer: 8/12 ASVspoof clones, 7/7 In-the-Wild clones reach HIGH+ | **none** — 0/12 ASVspoof clones; the clone passes the voiceprint (median mismatch 0.00) and nothing else can fire |
+| defence against a **clone of the enrolled speaker** | yes — acoustic layer: 8/12 ASVspoof clones, 7/7 In-the-Wild clones reach HIGH+ | **effectively none** — 0/12 ASVspoof clones (the clone passes the voiceprint, median mismatch 0.00, and nothing else can fire); 2/7 In-the-Wild clones only because those happen to mismatch their target's voiceprint (median 0.17), which is the speaker layer catching a poor clone, not the acoustic layer catching a clone |
 | false positives on genuine multi-speaker calls | 0/16 utterances, 0/8 calls (ASVspoof); 0/7 (In-the-Wild) | 0/16, 0/8; 0/7 |
 | what it is | **the real system** | an offline fallback with a structurally reduced capability |
 
