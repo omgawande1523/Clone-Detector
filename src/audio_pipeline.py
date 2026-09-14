@@ -9,8 +9,43 @@ identical either way, since it only ever sees numpy chunks.
 """
 
 from dataclasses import dataclass
+import logging
+from math import gcd
+
 import numpy as np
 import soundfile as sf
+
+log = logging.getLogger(__name__)
+
+
+def resample_to(wav: np.ndarray, sr: int, target_sr: int) -> np.ndarray:
+    """The ONE resampler. Polyphase FIR (scipy.signal.resample_poly),
+    which applies a proper anti-aliasing low-pass before decimation.
+
+    Why it matters: downsampling 44.1/48 kHz phone audio to 16 kHz
+    without a filter folds everything above 8 kHz back into the band —
+    exactly the spectral region a spoof classifier keys on. Every
+    committed fixture is already 16 kHz, so the published AUC figures
+    never exercised the old np.interp path; an uploaded phone recording
+    did. That path also had an off-by-one (linspace to len(wav) instead
+    of len(wav) - 1) that a second copy in api.py did not, so the two
+    disagreed.
+
+    Falls back to a corrected linear interpolation (no anti-aliasing)
+    only if scipy is unavailable, and logs a warning when it does.
+    """
+    wav = np.asarray(wav, dtype=np.float32)
+    if sr == target_sr or len(wav) == 0:
+        return wav
+    try:
+        from scipy.signal import resample_poly
+    except ImportError:
+        log.warning("scipy not available: resampling %d -> %d Hz with linear interpolation "
+                    "and NO anti-aliasing filter; install scipy for correct results", sr, target_sr)
+        n = int(round(len(wav) * target_sr / sr))
+        return np.interp(np.linspace(0, len(wav) - 1, n), np.arange(len(wav)), wav).astype(np.float32)
+    g = gcd(int(sr), int(target_sr))
+    return resample_poly(wav, int(target_sr) // g, int(sr) // g).astype(np.float32)
 
 
 @dataclass
@@ -38,14 +73,24 @@ def load_mono(path: str):
 DEFAULT_CHUNK_SECONDS = 5.0
 
 
-def chunk_audio(path: str, chunk_seconds: float = DEFAULT_CHUNK_SECONDS, overlap: float = 0.0):
+PIPELINE_SR = 16000
+
+
+def chunk_audio(path: str, chunk_seconds: float = DEFAULT_CHUNK_SECONDS, overlap: float = 0.0,
+                target_sr: int = PIPELINE_SR):
     """Yields AudioChunk objects covering the whole file in order.
+
+    Audio at any rate is resampled once, up front, to target_sr with the
+    anti-aliased resampler, so every downstream stage sees the rate the
+    detectors and the speaker encoder were calibrated at.
 
     overlap: fraction of the previous chunk to re-include (0-0.9).
     Small overlap helps catch spoofing artifacts that straddle a
     chunk boundary, at the cost of more compute.
     """
     wav, sr = load_mono(path)
+    if target_sr and sr != target_sr:
+        wav, sr = resample_to(wav, sr, target_sr), target_sr
     chunk_len = int(sr * chunk_seconds)
     step = int(chunk_len * (1 - overlap)) or chunk_len
     total = len(wav)

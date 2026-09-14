@@ -81,7 +81,7 @@ pip install -r requirements-dev.txt
 pytest -q
 ```
 
-134 tests. The suite is built around the bugs that actually shipped, so
+143 tests. The suite is built around the bugs that actually shipped, so
 each of these would fail if the bug came back:
 
 | test file | pins |
@@ -95,6 +95,7 @@ each of these would fail if the bug came back:
 | `test_api.py` | error paths return 4xx with a readable message, never a 500 |
 | `test_transformer_backend.py` | wav2vec2 backend on both fixture sets, cross- and in-domain reported separately |
 | `test_fused_modes.py` | full fused pipeline per mode: zero FP in both; targeted-clone recall floor in transformer mode; heuristic acoustic weight is exactly zero |
+| `test_resampling.py` | one anti-aliased resampler everywhere: a >8 kHz tone does not alias into band; a 48 kHz round trip keeps its verdict |
 | `test_risk_engine_consistency.py` | a single unsustained crossing reports final_level HIGH, sustained_level LOW, and never says "no signal detected" |
 | `test_alert_capability.py` | heuristic mode with no enrolment can never alert and must say so in /health, /analyze and the live ready message |
 | `test_live_ws.py` | `/ws/live` answers each window before the next is sent, one risk engine carries across windows, an alert is audited the instant it fires, and live and batch paths score identically |
@@ -303,6 +304,27 @@ download once, ~0.2–0.4 s per 5 s chunk on a laptop CPU.
 `tests/test_transformer_backend.py` re-measures this (skipped unless
 the weights are cached locally).
 
+**Sample rate — the path an uploaded phone recording actually takes.**
+Every committed fixture is 16 kHz, so the figures above never
+exercised resampling. The old resampler (`np.interp`, no anti-aliasing
+filter, plus an off-by-one that `api.py`'s separate copy did not have)
+would have folded >8 kHz energy from a 44.1/48 kHz recording into the
+band a spoof classifier keys on. There is now one resampler,
+`audio_pipeline.resample_to()` (scipy polyphase FIR), used by the
+transformer, the upload path and the live path alike. Measured with
+`scripts/evaluate_fused.py`'s 48 kHz round-trip section — every test
+clip upsampled to 48 kHz, resampled back by the pipeline, re-scored:
+
+| backend | clips | same level | same alert | max Δ peak | max Δ acoustic |
+|---|---|---|---|---|---|
+| heuristic | 42 | 42/42 | 42/42 | 0.017 | 0.015 |
+| transformer | 42 | **41/42** | 42/42 | 0.042 | 0.093 |
+
+The one change is a borderline A03 clip (`LA_D_2169320`: HIGH 0.429 →
+MEDIUM 0.388, acoustic 0.983 → 0.890) sitting on the 0.40 boundary; no
+alert changed. `tests/test_resampling.py` pins that a 12 kHz tone does
+not alias into the band and that a 48 kHz round trip keeps its verdict.
+
 ## Switching to the real ML model
 
 ```bash
@@ -399,5 +421,7 @@ still being useful for compliance.
   data you don't yet have.
 - The audit log is a local hash chain, not yet an anchored distributed
   ledger — say so explicitly, it's a prototype of the mechanism.
-- `.wav` only for now; non-wav call formats need an `ffmpeg` decode
-  step before `audio_pipeline.py`.
+- Container formats: WAV/FLAC/OGG/AIFF (whatever `libsndfile` reads);
+  MP3/M4A/WebM call formats need an `ffmpeg` decode step before
+  `audio_pipeline.py`. Any sample rate is accepted and resampled once,
+  up front, with an anti-aliased resampler.

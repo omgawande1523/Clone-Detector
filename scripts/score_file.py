@@ -13,7 +13,7 @@ import numpy as np
 import soundfile as sf
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from src.audio_pipeline import load_mono, DEFAULT_CHUNK_SECONDS          # noqa: E402
+from src.audio_pipeline import load_mono, resample_to, DEFAULT_CHUNK_SECONDS  # noqa: E402
 from src.detector import HeuristicDetector, TransformerDetector         # noqa: E402
 from src.fusion import weights_for_backend                              # noqa: E402
 from src.evaluation import run_call, SR                                  # noqa: E402
@@ -32,9 +32,8 @@ print(f"  container/subtype : {info.format} / {info.subtype}   channels {info.ch
 print(f"  duration          : {info.duration:.2f} s   -> {int(info.duration // DEFAULT_CHUNK_SECONDS)} full {DEFAULT_CHUNK_SECONDS:.0f} s window(s)"
       + (f" + {info.duration % DEFAULT_CHUNK_SECONDS:.2f} s tail" if info.duration % DEFAULT_CHUNK_SECONDS >= 0.2 else ""))
 if sr != SR:
-    n = int(len(wav) * SR / sr)
-    wav = np.interp(np.linspace(0, len(wav) - 1, n), np.arange(len(wav)), wav).astype(np.float32)
-    print(f"  resampled {sr} -> {SR} Hz for the pipeline")
+    wav = resample_to(wav, sr, SR)
+    print(f"  resampled {sr} -> {SR} Hz for the pipeline (anti-aliased)")
 speech = len(_preprocess(wav, SR)) / SR
 print(f"  speech after VAD  : {speech:.2f} s   (speaker layer needs >= {MIN_SPEECH_SECONDS} s per window)")
 print(f"  level             : peak {np.abs(wav).max():.3f}  rms {np.sqrt(np.mean(wav**2)):.4f}  "

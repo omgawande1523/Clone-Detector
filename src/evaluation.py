@@ -33,7 +33,7 @@ import os
 
 import numpy as np
 
-from .audio_pipeline import load_mono, DEFAULT_CHUNK_SECONDS
+from .audio_pipeline import load_mono, resample_to, DEFAULT_CHUNK_SECONDS
 from .fusion import fuse, FusionWeights
 from .risk_engine import RiskEngine
 from .context_engine import score_context
@@ -160,6 +160,63 @@ def evaluate_itw(detector, weights: FusionWeights, chunk_s=CHUNK_S):
         spoof.append(_row(d["spoof"], speaker, "spoof", "itw", swav,
                           *run_call(swav, ref, detector, weights, ctx, chunk_s)))
     return dict(dataset="In-the-Wild", speakers=sorted(by_spk), genuine=genuine, calls=[], spoof=spoof)
+
+
+# ------------------------------------------------------ 48 kHz round trip
+
+def roundtrip_48k(detector, weights: FusionWeights, items):
+    """Does a verdict survive being delivered at phone/laptop sample
+    rates? Each 16 kHz clip is upsampled to 48 kHz (what a phone or
+    browser would hand us) and resampled back through the pipeline's
+    own resample_to(); the fused verdict is compared with the original.
+
+    items: iterable of (label, wav16k, reference_print_or_None).
+    Returns per-item rows and a summary."""
+    rows = []
+    ctx = score_context()["context_score"]
+    for label, wav, ref in items:
+        s0, r0, _ = run_call(wav, ref, detector, weights, ctx)
+        wav48 = resample_to(wav, SR, 48000)
+        back = resample_to(wav48, 48000, SR)
+        s1, r1, _ = run_call(back, ref, detector, weights, ctx)
+        rows.append(dict(label=label, level0=s0["peak_level"], level1=s1["peak_level"],
+                         peak0=s0["peak_risk_score"], peak1=s1["peak_risk_score"],
+                         alert0=s0["alert_triggered"], alert1=s1["alert_triggered"],
+                         acoustic0=max(r["acoustic"] for r in r0), acoustic1=max(r["acoustic"] for r in r1)))
+    same_level = sum(r["level0"] == r["level1"] for r in rows)
+    same_alert = sum(r["alert0"] == r["alert1"] for r in rows)
+    max_dpeak = max((abs(r["peak0"] - r["peak1"]) for r in rows), default=0.0)
+    max_dac = max((abs(r["acoustic0"] - r["acoustic1"]) for r in rows), default=0.0)
+    return rows, dict(n=len(rows), same_level=same_level, same_alert=same_alert,
+                      max_delta_peak=max_dpeak, max_delta_acoustic=max_dac)
+
+
+def fixture_items_for_roundtrip():
+    """Every test clip in both fixture sets with its proper reference
+    print, as (label, wav, ref) for roundtrip_48k()."""
+    items = []
+    manifest = json.load(open(os.path.join(ASV, "manifest.json")))
+    speakers = sorted({m["speaker"] for m in manifest if m["key"] == "bonafide"})
+    prints = {}
+    for spk in speakers:
+        enrol = [m["utt"] for m in manifest if m["speaker"] == spk and m["role"] == "enrol"]
+        prints[spk] = compute_voiceprint(np.concatenate([_asv_wav(u) for u in enrol]), SR)
+    for m in manifest:
+        if m["role"] == "test":
+            items.append((f"asv:{m['utt']}:{m['key']}:{m['system']}", _asv_wav(m["utt"]), prints[m["speaker"]]))
+    by_spk = {}
+    for line in open(os.path.join(ITW, "meta.subset.csv")):
+        if line.startswith("file,"):
+            continue
+        fname, speaker, label = line.strip().split(",")
+        by_spk.setdefault(speaker, {})[label] = fname
+    for speaker, d in sorted(by_spk.items()):
+        bwav, _ = load_mono(os.path.join(ITW, "wav", d["bona-fide"]))
+        ref = compute_voiceprint(bwav, SR)
+        items.append((f"itw:{d['bona-fide']}:bonafide", bwav, ref))
+        swav, _ = load_mono(os.path.join(ITW, "wav", d["spoof"]))
+        items.append((f"itw:{d['spoof']}:spoof", swav, ref))
+    return items
 
 
 # ------------------------------------------------------------ metrics

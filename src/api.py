@@ -53,7 +53,7 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException, WebSocket, W
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 
-from .audio_pipeline import chunk_audio, load_mono, DEFAULT_CHUNK_SECONDS
+from .audio_pipeline import chunk_audio, load_mono, resample_to, DEFAULT_CHUNK_SECONDS
 from .risk_engine import RiskEngine, ALERT_THRESHOLD
 from .detector import get_detector
 from .speaker_consistency import VoiceprintStore
@@ -346,8 +346,7 @@ def _decode_live_chunk(data: bytes):
         if wav.ndim > 1:
             wav = wav.mean(axis=1)
         if sr != LIVE_SR:
-            n = int(len(wav) * LIVE_SR / sr)
-            wav = np.interp(np.linspace(0, len(wav) - 1, n), np.arange(len(wav)), wav).astype(np.float32)
+            wav = resample_to(wav, sr, LIVE_SR)
         return wav, LIVE_SR
     return np.frombuffer(data, dtype="<i2").astype(np.float32) / 32768.0, LIVE_SR
 

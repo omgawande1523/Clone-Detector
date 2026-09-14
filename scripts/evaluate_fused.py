@@ -21,7 +21,8 @@ from src.detector import get_detector                                   # noqa: 
 from src.fusion import (weights_for_backend, FusionWeights,             # noqa: E402
                         TRANSFORMER_WEIGHTS, HEURISTIC_WEIGHTS)
 from src.risk_engine import ALERT_THRESHOLD                             # noqa: E402
-from src.evaluation import evaluate_asvspoof, evaluate_itw, metrics, print_table  # noqa: E402
+from src.evaluation import (evaluate_asvspoof, evaluate_itw, metrics, print_table,  # noqa: E402
+                            roundtrip_48k, fixture_items_for_roundtrip)
 
 FILES = "--files" in sys.argv
 
@@ -103,6 +104,22 @@ for backend in ("heuristic", "transformer"):
         res2, m2, _ = results[key2]
         print(f"  {backend} backend, In-the-Wild: 7 clones of enrolled speakers -> HIGH/CRITICAL {m2['spoof_caught']}/7, "
               f"median speaker-mismatch {sorted(r['worst_speaker'] for r in res2['spoof'])[3]:.3f}")
+
+# --- 48 kHz round trip: does an uploaded phone/laptop recording get the same verdict?
+print("\n" + "=" * 118)
+print("48 kHz ROUND TRIP: every test clip upsampled to 48 kHz, resampled back by the pipeline's resample_to(), re-scored")
+print("=" * 118)
+for backend in ("heuristic", "transformer"):
+    try:
+        det = get_detector(backend)
+    except Exception:
+        continue
+    rows, m = roundtrip_48k(det, weights_for_backend(det.backend), fixture_items_for_roundtrip())
+    changed = [r for r in rows if r["level0"] != r["level1"] or r["alert0"] != r["alert1"]]
+    print(f"  {backend:<12} {m['n']} clips: same level {m['same_level']}/{m['n']}, same alert {m['same_alert']}/{m['n']}, "
+          f"max |delta peak| {m['max_delta_peak']:.3f}, max |delta acoustic| {m['max_delta_acoustic']:.3f}")
+    for r in changed:
+        print(f"      CHANGED {r['label']}: {r['level0']} {r['peak0']:.3f} -> {r['level1']} {r['peak1']:.3f}")
 
 if FILES:
     for (backend, dataset), (res, m, weights) in results.items():

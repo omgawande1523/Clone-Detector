@@ -25,6 +25,8 @@ to get_detector().
 import os
 import numpy as np
 
+from .audio_pipeline import resample_to
+
 
 class HeuristicDetector:
     """Offline, dependency-light anti-spoofing baseline."""
@@ -251,15 +253,8 @@ class TransformerDetector:
     def predict(self, wav: np.ndarray, sr: int) -> float:
         target_sr = self.feature_extractor.sampling_rate
         if sr != target_sr:
-            # simple linear resample; swap for torchaudio.resample if
-            # you need higher quality
-            duration = len(wav) / sr
-            n_target = int(duration * target_sr)
-            wav = np.interp(
-                np.linspace(0, len(wav), n_target),
-                np.arange(len(wav)),
-                wav,
-            )
+            # anti-aliased polyphase resample -- see audio_pipeline.resample_to
+            wav = resample_to(wav, sr, target_sr)
 
         inputs = self.feature_extractor(
             wav, sampling_rate=target_sr, return_tensors="pt", padding=True
