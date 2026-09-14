@@ -81,7 +81,7 @@ pip install -r requirements-dev.txt
 pytest -q
 ```
 
-97 tests. The suite is built around the bugs that actually shipped, so
+113 tests. The suite is built around the bugs that actually shipped, so
 each of these would fail if the bug came back:
 
 | test file | pins |
@@ -94,6 +94,7 @@ each of these would fail if the bug came back:
 | `test_context_and_risk.py` | word-boundary keyword matching; peak risk reported, not the trailing EMA |
 | `test_api.py` | error paths return 4xx with a readable message, never a 500 |
 | `test_transformer_backend.py` | wav2vec2 backend on both fixture sets, cross- and in-domain reported separately |
+| `test_fused_modes.py` | full fused pipeline per mode: zero FP in both; targeted-clone recall floor in transformer mode; heuristic acoustic weight is exactly zero |
 
 ## The three signals, in more detail
 
@@ -164,6 +165,48 @@ Hyperledger Fabric) shared across a bank's nodes, so no single admin
 can unilaterally rewrite the fraud-alert history. Say exactly this to
 judges — it shows you understand what blockchain actually buys you,
 instead of just namedropping it.
+
+## Two detection modes — they are not equivalent
+
+The fusion weights follow the loaded detector backend automatically
+(`fusion.weights_for_backend`; there is no user flag, so it cannot be
+misconfigured), and every `/health` and `/analyze` response plus the
+UI say which mode produced the result.
+
+| | **Transformer mode** (`DETECTOR_BACKEND=transformer`) | **Heuristic-only mode** (default, no download) |
+|---|---|---|
+| fusion weights (acoustic / speaker / context) | 0.45 / 0.45 / 0.10 | **0.00** / 0.90 / 0.10 |
+| acoustic signal | wav2vec2 spoof classifier, validated (AUC 0.81 cross-domain, 1.00 in-domain) | measured AUC 0.25 / 0.14 — below chance, so weight is **exactly zero** |
+| defence against an impostor (different person) | yes — speaker layer | yes — speaker layer |
+| defence against a **clone of the enrolled speaker** | yes — acoustic layer: 7/12 ASVspoof clones, 7/7 In-the-Wild clones reach HIGH+ | **none** — 0/12 ASVspoof clones; the clone passes the voiceprint (median mismatch 0.04) and nothing else can fire |
+| false positives on genuine multi-speaker calls | 0/16 utterances, 0/8 calls (ASVspoof); 0/7 (In-the-Wild) | 0/16, 0/8; 0/7 |
+| what it is | **the real system** | an offline fallback with a structurally reduced capability |
+
+**Heuristic-only mode must not be presented or deployed as equivalent
+to transformer mode.** This is not "a bit less accurate": in that
+configuration the system has *no* defence against a targeted clone of
+the enrolled speaker, per the measured data above, and the code
+enforces the reduction rather than leaving it to a weight that someone
+might nudge back up. Say this to judges before they find it. The
+heuristic detector is still computed and shown in the UI (it catches a
+crude over-smoothed vocoder, which is a good demo moment) but it is
+not allowed to move the risk score.
+
+Reproduce every number in this section with
+`venv/Scripts/python scripts/evaluate_fused.py` (add `--files` for
+per-clip tables). Two things it also shows, kept as documented
+limitations rather than fixed here:
+
+- Zeroing heuristic-acoustic changed nothing that matters: with the
+  old 0.45/0.45/0.10 weights the heuristic mode was already at 0/12
+  clones and 0 false positives. The acoustic layer's contribution to
+  the fused output was already too small to alter any verdict; the
+  change removes a below-chance signal from the sum, it does not
+  remove a working one.
+- Scoring 3-second chunks can lose a detection the model makes on the
+  whole utterance: `LA_D_5685369` (A03) scores 0.948 whole-file and
+  0.119 on its first chunk, which is why fused recall on ASVspoof is
+  7/12 where raw whole-file recall was 8/12.
 
 ## Measured accuracy of the two acoustic backends
 

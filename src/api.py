@@ -42,7 +42,7 @@ from .risk_engine import RiskEngine, ALERT_THRESHOLD
 from .detector import get_detector
 from .speaker_consistency import VoiceprintStore
 from .context_engine import score_context
-from .fusion import fuse, check_alertable
+from .fusion import fuse, check_alertable, weights_for_backend, detection_mode
 from .audit_log import AuditLog
 
 # Upload caps. 16 kHz mono 16-bit PCM is ~32 KB/s, so 50 MB is roughly
@@ -66,6 +66,11 @@ app.add_middleware(
 )
 
 _detector = get_detector()          # loaded once at startup
+# Fusion weights follow the loaded backend automatically. There is no
+# flag for this: the heuristic backend's acoustic weight is zero because
+# it measured at/below chance on labelled data (see fusion.py).
+_weights = weights_for_backend(_detector.backend)
+_mode = detection_mode(_detector.backend)
 _voiceprints = VoiceprintStore()    # path anchored to project root
 _audit = AuditLog()                 # path anchored to project root
 
@@ -125,8 +130,9 @@ def health():
     return {
         "status": "ok",
         "backend": _detector.name,
+        "detection_mode": _mode,
         "alert_threshold": ALERT_THRESHOLD,
-        "fusion_check": check_alertable(ALERT_THRESHOLD),
+        "fusion_check": check_alertable(ALERT_THRESHOLD, _weights),
     }
 
 
@@ -198,7 +204,7 @@ async def analyze(
                 _voiceprints.mismatch_score(speaker_id, chunk.waveform, chunk.sample_rate)
                 if speaker_enrolled else 0.0
             )
-            fused = fuse(acoustic["spoof_prob"], speaker_mismatch, ctx["context_score"])
+            fused = fuse(acoustic["spoof_prob"], speaker_mismatch, ctx["context_score"], _weights)
             result = engine.update(fused["fused_score"])
             timeline.append({
                 "start_time": round(chunk.start_time, 2),
@@ -237,6 +243,7 @@ async def analyze(
 
     return {
         "backend": _detector.name,
+        "detection_mode": _mode,
         "speaker_id": speaker_id,
         "speaker_enrolled": speaker_enrolled,
         "context_reasons": ctx["reasons"],

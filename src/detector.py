@@ -30,6 +30,7 @@ class HeuristicDetector:
     """Offline, dependency-light anti-spoofing baseline."""
 
     name = "heuristic-signal-baseline"
+    backend = "heuristic"     # selects fusion weights -- see fusion.weights_for_backend
 
     def _f0_track(self, wav: np.ndarray, sr: int, frame_ms=32, hop_ms=16):
         """Very small autocorrelation-based pitch tracker. Returns an
@@ -225,6 +226,7 @@ class TransformerDetector:
         "SPOOF_MODEL_ID", "abhishtagatya/wav2vec2-base-960h-itw-deepfake"
     )
     name = f"transformer:{MODEL_ID}"
+    backend = "transformer"   # selects fusion weights -- see fusion.weights_for_backend
 
     def __init__(self):
         try:

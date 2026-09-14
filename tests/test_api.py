@@ -62,7 +62,10 @@ needs_samples = pytest.mark.skipif(
 def test_health_reports_the_fusion_invariant(client):
     d = client.get("/health").json()
     assert d["status"] == "ok"
-    assert d["fusion_check"]["acoustic_can_alert"] is True
+    # acoustic_can_alert follows the mode: True with the transformer,
+    # False (by design, weight zero) with the heuristic backend.
+    expected_acoustic = d["detection_mode"]["acoustic_enabled"]
+    assert d["fusion_check"]["acoustic_can_alert"] is expected_acoustic
     assert d["fusion_check"]["speaker_can_alert"] is True
     assert d["fusion_check"]["context_can_alert"] is False
 
@@ -182,3 +185,26 @@ def test_silent_file_reports_no_analysable_audio(client):
     r = client.post("/analyze", files={"file": ("silence.wav", buf.getvalue(), "audio/wav")})
     assert r.status_code == 400
     assert "no analysable audio" in r.json()["detail"]
+
+
+# ------------------------------------------------------ detection mode
+
+def test_health_reports_detection_mode_unambiguously(client):
+    d = client.get("/health").json()
+    mode = d["detection_mode"]
+    assert mode["mode"] in ("heuristic", "transformer")
+    assert "label" in mode and "description" in mode and "security_posture" in mode
+    # the mode must agree with the weights the fusion check is using
+    assert d["fusion_check"]["acoustic_alone_max"] == mode["weights"]["acoustic"]
+    if mode["mode"] == "heuristic":
+        assert mode["acoustic_enabled"] is False
+        assert mode["security_posture"] == "reduced"
+        assert d["fusion_check"]["acoustic_can_alert"] is False
+        assert d["fusion_check"]["speaker_can_alert"] is True
+
+
+@needs_samples
+def test_analyze_response_carries_detection_mode(client):
+    r = client.post("/analyze", files=_upload(GENUINE_A))
+    assert r.status_code == 200
+    assert r.json()["detection_mode"] == client.get("/health").json()["detection_mode"]

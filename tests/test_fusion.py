@@ -8,18 +8,71 @@ independent signals but in practice required several at once.
 
 import itertools
 
-from src.fusion import fuse, FusionWeights, check_alertable
+import pytest
+
+from src.fusion import (fuse, FusionWeights, check_alertable, weights_for_backend,
+                        detection_mode, TRANSFORMER_WEIGHTS, HEURISTIC_WEIGHTS)
 from src.risk_engine import ALERT_THRESHOLD, LEVELS, level_for, RiskEngine
+from src.detector import HeuristicDetector, TransformerDetector
 
 
-def test_weights_form_a_weighted_average():
-    w = FusionWeights()
+@pytest.mark.parametrize("w", [TRANSFORMER_WEIGHTS, HEURISTIC_WEIGHTS])
+def test_weights_form_a_weighted_average(w):
     assert abs((w.acoustic + w.speaker + w.context) - 1.0) < 1e-9
 
 
+# ------------------------------------------------ backend-aware weights
+
+def test_weights_follow_the_detector_not_a_flag():
+    """Selection keys off the detector class's own `backend` attribute,
+    so it cannot drift from whatever DETECTOR_BACKEND actually loaded."""
+    assert weights_for_backend(HeuristicDetector.backend) is HEURISTIC_WEIGHTS
+    assert weights_for_backend(TransformerDetector.backend) is TRANSFORMER_WEIGHTS
+
+
+def test_unknown_backend_is_refused_not_defaulted():
+    with pytest.raises(ValueError):
+        weights_for_backend("some-new-model")
+
+
+def test_heuristic_acoustic_weight_is_exactly_zero():
+    """Measured AUC 0.25 (ASVspoof) and 0.14 (In-the-Wild): below
+    chance. Any positive weight makes the fused score worse. If this
+    test fails because someone restored 0.05 'to be safe', read the
+    comment in fusion.py and revert."""
+    assert HEURISTIC_WEIGHTS.acoustic == 0.0
+    assert fuse(1.0, 0.0, 0.0, HEURISTIC_WEIGHTS)["fused_score"] == 0.0
+
+
+def test_heuristic_mode_speaker_alone_still_alerts():
+    assert fuse(0.0, 1.0, 0.0, HEURISTIC_WEIGHTS)["fused_score"] >= ALERT_THRESHOLD
+    c = check_alertable(ALERT_THRESHOLD, HEURISTIC_WEIGHTS)
+    assert c["speaker_can_alert"] is True
+    assert c["acoustic_can_alert"] is False       # by design in this mode
+    assert c["context_can_alert"] is False
+
+
+def test_transformer_weights_unchanged():
+    assert TRANSFORMER_WEIGHTS == FusionWeights(0.45, 0.45, 0.10)
+
+
+def test_detection_mode_is_unambiguous():
+    h, t = detection_mode("heuristic"), detection_mode("transformer")
+    assert h["acoustic_enabled"] is False and h["security_posture"] == "reduced"
+    assert t["acoustic_enabled"] is True and t["security_posture"] == "full"
+    assert "no defence against a clone" in h["description"]
+    assert h["weights"]["acoustic"] == 0.0
+
+
+def test_weights_are_immutable():
+    with pytest.raises(Exception):
+        TRANSFORMER_WEIGHTS.acoustic = 0.9
+
+
 def test_acoustic_alone_can_reach_alert_level():
-    """A confidently-synthetic voice is an alert on its own merits."""
-    score = fuse(1.0, 0.0, 0.0)["fused_score"]
+    """A confidently-synthetic voice is an alert on its own merits —
+    in TRANSFORMER mode, where the acoustic signal is validated."""
+    score = fuse(1.0, 0.0, 0.0, TRANSFORMER_WEIGHTS)["fused_score"]
     assert score >= ALERT_THRESHOLD, (
         f"acoustic maxed reaches only {score}, below threshold {ALERT_THRESHOLD}"
     )
@@ -40,7 +93,7 @@ def test_context_alone_cannot_reach_alert_level():
 
 
 def test_check_alertable_invariant():
-    c = check_alertable(ALERT_THRESHOLD)
+    c = check_alertable(ALERT_THRESHOLD, TRANSFORMER_WEIGHTS)
     assert c["acoustic_can_alert"] is True
     assert c["speaker_can_alert"] is True
     assert c["context_can_alert"] is False

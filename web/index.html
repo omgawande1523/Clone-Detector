@@ -108,6 +108,17 @@
   .banner.show { display: block; }
   .banner b { display: block; margin-bottom: 3px; }
   .footnote { color: var(--muted); font-size: 12px; margin-top: 22px; text-align: center; }
+
+  /* detection-mode banner: a judge must never be unsure which mode produced a result */
+  #modeBanner { display: none; margin-top: 14px; padding: 11px 15px; border-radius: 9px; font-size: 13.5px; border: 1px solid; }
+  #modeBanner.show { display: block; }
+  #modeBanner.full { background: var(--green-bg); border-color: #bbf7d0; color: #166534; }
+  #modeBanner.reduced { background: var(--amber-bg); border-color: #f59e0b; color: #92400e; }
+  #modeBanner b { display: block; margin-bottom: 2px; font-size: 14px; }
+  #modeBanner .w { font-family: ui-monospace, Consolas, monospace; font-size: 12px; opacity: .85; }
+  .modetag { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: .04em; padding: 2px 8px; border-radius: 6px; vertical-align: 2px; margin-left: 8px; }
+  .modetag.full { background: #dcfce7; color: #166534; }
+  .modetag.reduced { background: #fef3c7; color: #92400e; }
 </style>
 </head>
 <body>
@@ -120,6 +131,8 @@
     </div>
     <div id="serverPill" class="pill">checking server…</div>
   </header>
+
+  <div id="modeBanner"><b id="modeLabel"></b><span id="modeDesc"></span><div class="w" id="modeWeights"></div></div>
 
   <div id="serverDown" class="banner">
     <b>Can't reach the analysis server.</b>
@@ -169,7 +182,7 @@
 
   <!-- VERDICT -->
   <div id="verdict" class="card">
-    <div class="headline"><span class="dot"></span><span id="headlineText"></span></div>
+    <div class="headline"><span class="dot"></span><span id="headlineText"></span><span id="verdictMode" class="modetag"></span></div>
     <div class="levelline">Risk level <span id="levelBadge" class="badge"></span> <span id="scoreText"></span></div>
 
     <div class="gauge"><div id="gaugeFill" class="gauge-fill"></div></div>
@@ -222,7 +235,7 @@
     <div id="auditDetail"></div>
   </div>
 
-  <p class="footnote">SIH26104 · prototype. Heuristic acoustic baseline — not a certified accuracy claim.</p>
+  <p class="footnote">SIH26104 · prototype. Measured accuracy per mode is in the README — not a certified claim.</p>
 </div>
 
 <script>
@@ -242,8 +255,9 @@ async function checkHealth() {
     const d = await res.json();
     serverUp = true;
     $('serverPill').className = 'pill ok';
-    $('serverPill').textContent = `server online · ${d.backend}`;
+    $('serverPill').textContent = `server online · ${d.detection_mode ? d.detection_mode.mode : d.backend}`;
     $('serverDown').classList.remove('show');
+    showMode(d.detection_mode);
   } catch {
     serverUp = false;
     $('serverPill').className = 'pill bad';
@@ -251,6 +265,17 @@ async function checkHealth() {
     $('serverDown').classList.add('show');
   }
   syncButtons();
+}
+
+function showMode(m) {
+  if (!m) return;
+  const full = m.security_posture === 'full';
+  const b = $('modeBanner');
+  b.className = 'show ' + (full ? 'full' : 'reduced');
+  $('modeLabel').textContent = (full ? '✓ ' : '⚠ ') + 'Detection mode: ' + m.label;
+  $('modeDesc').textContent = m.description;
+  $('modeWeights').textContent =
+    `fusion weights — acoustic ${m.weights.acoustic.toFixed(2)} · speaker ${m.weights.speaker.toFixed(2)} · context ${m.weights.context.toFixed(2)}`;
 }
 
 /* ---------- file pickers ---------- */
@@ -392,6 +417,12 @@ function render(d) {
   $('headlineText').textContent = alert
     ? 'Possible voice clone detected'
     : 'Voice appears genuine';
+  const m = d.detection_mode || {};
+  const vm = $('verdictMode');
+  vm.className = 'modetag ' + (m.security_posture === 'full' ? 'full' : 'reduced');
+  vm.textContent = m.security_posture === 'full' ? 'TRANSFORMER MODE' : 'HEURISTIC-ONLY · REDUCED';
+  vm.title = m.description || '';
+  showMode(m);
   v.querySelector('.dot').style.background = colour;
 
   $('levelBadge').textContent = level;
@@ -406,10 +437,19 @@ function render(d) {
 
   // --- acoustic ---
   const worstAcoustic = Math.max(...d.timeline.map(t => t.acoustic_score));
+  const acousticOn = !d.detection_mode || d.detection_mode.acoustic_enabled;
   setSignal('sigAcoustic', worstAcoustic,
-    worstAcoustic >= 0.6 ? 'Synthetic artefacts found'
+    !acousticOn ? 'Not counted in this mode'
+      : worstAcoustic >= 0.6 ? 'Synthetic artefacts found'
       : worstAcoustic >= 0.3 ? 'Some irregularity' : 'Sounds naturally human',
-    worstAcoustic >= 0.3 ? 'var(--orange)' : 'var(--green)');
+    !acousticOn ? 'var(--muted)' : worstAcoustic >= 0.3 ? 'var(--orange)' : 'var(--green)');
+  const acPlain = $('sigAcoustic').querySelector('.plain');
+  if (!acousticOn) {
+    $('sigAcoustic').classList.add('na');
+    acPlain.textContent = 'Heuristic-only mode: the acoustic detector measured at or below chance on labelled spoof data, so its weight is zero. The value is shown for reference only and does not move the risk score. Run with DETECTOR_BACKEND=transformer for the validated acoustic signal.';
+  } else {
+    acPlain.textContent = 'Does the audio itself carry the artefacts that text-to-speech and voice cloners leave behind? Scored by a wav2vec2 classifier fine-tuned on real deepfake audio.';
+  }
 
   // --- speaker ---
   const sig = $('sigSpeaker');
