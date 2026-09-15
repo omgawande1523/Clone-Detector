@@ -1,0 +1,1676 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SIH26104 · Voice-Clone Defense Pipeline</title>
+  <style>
+    /* ==========================================================================
+       DESIGN SYSTEM: EDITORIAL / INK-ON-PAPER
+       Restraint as governing principle.
+       Single accent color reserved for elevated risk.
+       Serif headings, high contrast, tabular numbers, hairline rules.
+       No gradients on text, no glassmorphism, no neon glows, no emojis.
+       ========================================================================== */
+    :root {
+      --bg-page: #fbf9f5;
+      --bg-surface: #ffffff;
+      --border-rule: #e5dfd5;
+      --border-subtle: #d6cec2;
+      --border-focus: #1c1917;
+
+      --text-ink: #1c1917;
+      --text-secondary: #57534e;
+      --text-dim: #78716c;
+      --text-whisper: #a8a29e;
+
+      /* Risk accent: restrained ink tones, red appears ONLY when risk elevates */
+      --risk-calm: #44403c;
+      --risk-calm-bg: #f5f2eb;
+      --risk-calm-border: #d6cec2;
+
+      --risk-alert: #b91c1c;
+      --risk-alert-bg: #fef2f2;
+      --risk-alert-border: #b91c1c;
+
+      /* Edge paths */
+      --edge-idle: #ded7cc;
+      --edge-active: #292524;
+      --edge-hot: #b91c1c;
+
+      /* Popover */
+      --popover-bg: #ffffff;
+      --popover-shadow: 0 4px 16px rgba(28, 25, 23, 0.08);
+
+      --font-serif: Georgia, "Nimbus Roman No9 L", "Century Schoolbook L", serif;
+      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+
+    [data-theme="dark"] {
+      --bg-page: #141210;
+      --bg-surface: #1a1816;
+      --border-rule: #2a2622;
+      --border-subtle: #38332d;
+      --border-focus: #f5f5f4;
+
+      --text-ink: #f5f5f4;
+      --text-secondary: #a8a29e;
+      --text-dim: #78716c;
+      --text-whisper: #57534e;
+
+      --risk-calm: #a8a29e;
+      --risk-calm-bg: #211e1a;
+      --risk-calm-border: #38332d;
+
+      --risk-alert: #ef4444;
+      --risk-alert-bg: #261313;
+      --risk-alert-border: #ef4444;
+
+      --edge-idle: #262320;
+      --edge-active: #d6d3d1;
+      --edge-hot: #ef4444;
+
+      --popover-bg: #1c1916;
+      --popover-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --bg-page: #141210;
+        --bg-surface: #1a1816;
+        --border-rule: #2a2622;
+        --border-subtle: #38332d;
+        --border-focus: #f5f5f4;
+
+        --text-ink: #f5f5f4;
+        --text-secondary: #a8a29e;
+        --text-dim: #78716c;
+        --text-whisper: #57534e;
+
+        --risk-calm: #a8a29e;
+        --risk-calm-bg: #211e1a;
+        --risk-calm-border: #38332d;
+
+        --risk-alert: #ef4444;
+        --risk-alert-bg: #261313;
+        --risk-alert-border: #ef4444;
+
+        --edge-idle: #262320;
+        --edge-active: #d6d3d1;
+        --edge-hot: #ef4444;
+
+        --popover-bg: #1c1916;
+        --popover-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+      }
+    }
+
+    /* Reset & Layout */
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      font-size: 16px;
+      line-height: 1.5;
+      color: var(--text-ink);
+      background-color: var(--bg-page);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow-x: hidden;
+      transition: background-color 0.2s ease, color 0.2s ease;
+      user-select: none;
+    }
+
+    /* Header & Margin Note */
+    header {
+      padding: 24px 36px 18px 36px;
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      border-bottom: 1px solid var(--border-rule);
+      position: relative;
+    }
+
+    .title-area {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    h1 {
+      font-family: var(--font-serif);
+      font-size: 26px;
+      font-weight: normal;
+      letter-spacing: -0.3px;
+      color: var(--text-ink);
+    }
+
+    .header-sub {
+      font-size: 14px;
+      color: var(--text-secondary);
+      letter-spacing: 0.2px;
+    }
+
+    /* Askew margin note for simulation disclaimer */
+    .margin-disclaimer {
+      font-family: var(--font-serif);
+      font-style: italic;
+      font-size: 13px;
+      color: var(--text-dim);
+      transform: rotate(-1deg);
+      border-left: 2px solid var(--border-subtle);
+      padding-left: 10px;
+      max-width: 400px;
+      line-height: 1.4;
+    }
+
+    /* Scenario Bar (Presenter's Own Words) */
+    .scenario-strip {
+      padding: 14px 36px;
+      border-bottom: 1px solid var(--border-rule);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      background: var(--bg-surface);
+    }
+
+    .scenario-buttons {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .scenario-label {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-right: 4px;
+    }
+
+    .btn-scenario {
+      background: transparent;
+      border: 1px solid var(--border-subtle);
+      color: var(--text-secondary);
+      padding: 6px 14px;
+      font-family: var(--font-sans);
+      font-size: 14px;
+      cursor: pointer;
+      border-radius: 3px;
+      transition: all 0.15s ease;
+    }
+
+    .btn-scenario:hover {
+      border-color: var(--text-ink);
+      color: var(--text-ink);
+    }
+
+    .btn-scenario.active {
+      border-color: var(--border-focus);
+      background: var(--text-ink);
+      color: var(--bg-page);
+      font-weight: 600;
+    }
+
+    .scenario-teaching-point {
+      font-family: var(--font-serif);
+      font-size: 15px;
+      color: var(--text-secondary);
+      font-style: italic;
+      max-width: 580px;
+      text-align: right;
+    }
+
+    /* Main Canvas Area */
+    main {
+      flex: 1;
+      position: relative;
+      padding: 16px 24px 8px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: flex-start;
+      overflow: hidden;
+    }
+
+    .svg-wrap {
+      width: 100%;
+      max-width: 1400px;
+      height: 100%;
+      min-height: 520px;
+      margin-left: 12px; /* Deliberate asymmetry: sits slightly left */
+      position: relative;
+    }
+
+    svg#flow-svg {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    /* Typography inside SVG */
+    .svg-stage-title {
+      font-family: var(--font-serif);
+      font-size: 17px;
+      fill: var(--text-ink);
+    }
+
+    .svg-stage-sub {
+      font-family: var(--font-sans);
+      font-size: 12px;
+      fill: var(--text-dim);
+      font-weight: 500;
+    }
+
+    .svg-mono-num {
+      font-family: var(--font-mono);
+      font-variant-numeric: tabular-nums;
+      font-size: 15px;
+      font-weight: 700;
+      fill: var(--text-ink);
+    }
+
+    /* Hairline Stage Borders */
+    .svg-stage-box {
+      fill: var(--bg-surface);
+      stroke: var(--border-subtle);
+      stroke-width: 1;
+      rx: 2;
+    }
+
+    /* Edge lines */
+    .svg-edge {
+      fill: none;
+      stroke: var(--edge-idle);
+      stroke-width: 1.5;
+      stroke-linecap: round;
+      transition: stroke 0.3s ease, stroke-width 0.3s ease;
+    }
+
+    .svg-edge.hot {
+      stroke: var(--edge-hot);
+      stroke-width: 3;
+    }
+
+    .svg-edge.dimmed-dashed {
+      stroke-dasharray: 4, 4;
+      stroke: var(--border-subtle);
+      opacity: 0.6;
+    }
+
+    /* Info button style */
+    .info-btn-trigger {
+      cursor: pointer;
+    }
+    .info-btn-circle {
+      fill: transparent;
+      stroke: var(--border-subtle);
+      stroke-width: 1;
+      transition: all 0.15s ease;
+    }
+    .info-btn-text {
+      font-family: var(--font-serif);
+      font-style: italic;
+      font-size: 11px;
+      fill: var(--text-dim);
+      text-anchor: middle;
+      dominant-baseline: central;
+    }
+    .info-btn-trigger:hover .info-btn-circle {
+      stroke: var(--text-ink);
+      fill: var(--border-rule);
+    }
+    .info-btn-trigger:hover .info-btn-text {
+      fill: var(--text-ink);
+    }
+
+    /* Single Info Popover */
+    .info-popover {
+      position: absolute;
+      width: 290px;
+      background: var(--popover-bg);
+      border: 1px solid var(--border-focus);
+      box-shadow: var(--popover-shadow);
+      padding: 14px 16px;
+      z-index: 100;
+      display: none;
+      border-radius: 2px;
+      pointer-events: auto;
+    }
+
+    .info-popover.visible {
+      display: block;
+    }
+
+    .info-popover-title {
+      font-family: var(--font-serif);
+      font-size: 14px;
+      font-weight: bold;
+      color: var(--text-ink);
+      margin-bottom: 6px;
+      border-bottom: 1px solid var(--border-rule);
+      padding-bottom: 4px;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .info-popover-plain {
+      font-size: 13.5px;
+      color: var(--text-ink);
+      line-height: 1.4;
+      margin-bottom: 8px;
+    }
+
+    .info-popover-tech {
+      font-size: 12px;
+      color: var(--text-dim);
+      font-family: var(--font-mono);
+      line-height: 1.35;
+      margin-bottom: 8px;
+      border-top: 1px dashed var(--border-rule);
+      padding-top: 6px;
+    }
+
+    .info-popover-val {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-ink);
+      font-family: var(--font-mono);
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* Bottom Control Bar */
+    .bottom-bar {
+      padding: 12px 36px 14px 36px;
+      border-top: 1px solid var(--border-rule);
+      background: var(--bg-surface);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .scrub-row {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .scrub-track {
+      flex: 1;
+      height: 24px;
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .scrub-cell {
+      flex: 1;
+      height: 100%;
+      border: 1px solid var(--border-rule);
+      background: var(--bg-page);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 10px;
+      font-size: 12px;
+      font-family: var(--font-mono);
+      color: var(--text-secondary);
+      cursor: pointer;
+      position: relative;
+    }
+
+    .scrub-cell:hover {
+      border-color: var(--text-ink);
+    }
+
+    .scrub-cell.active {
+      border-color: var(--border-focus);
+      background: var(--border-rule);
+      color: var(--text-ink);
+      font-weight: 700;
+    }
+
+    .scrub-cell.alert-point::after {
+      content: "ALERT";
+      font-family: var(--font-sans);
+      font-size: 9px;
+      font-weight: 800;
+      letter-spacing: 0.5px;
+      color: var(--risk-alert);
+      background: var(--risk-alert-bg);
+      border: 1px solid var(--risk-alert-border);
+      padding: 1px 4px;
+      border-radius: 2px;
+    }
+
+    .scrub-count {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-ink);
+      min-width: 140px;
+      text-align: right;
+    }
+
+    .controls-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .playback-cluster {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .btn-quiet {
+      background: transparent;
+      border: 1px solid var(--border-subtle);
+      color: var(--text-ink);
+      padding: 6px 14px;
+      font-size: 14px;
+      font-family: var(--font-sans);
+      cursor: pointer;
+      border-radius: 2px;
+    }
+    .btn-quiet:hover {
+      border-color: var(--text-ink);
+      background: var(--border-rule);
+    }
+
+    .btn-play-primary {
+      font-weight: 600;
+      min-width: 86px;
+      border-color: var(--border-focus);
+    }
+
+    .speed-cluster {
+      display: flex;
+      border: 1px solid var(--border-subtle);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .btn-speed {
+      background: transparent;
+      border: none;
+      border-right: 1px solid var(--border-subtle);
+      color: var(--text-secondary);
+      padding: 5px 10px;
+      font-size: 13px;
+      font-family: var(--font-mono);
+      cursor: pointer;
+    }
+    .btn-speed:last-child {
+      border-right: none;
+    }
+    .btn-speed:hover {
+      color: var(--text-ink);
+    }
+    .btn-speed.active {
+      background: var(--border-rule);
+      color: var(--text-ink);
+      font-weight: 700;
+    }
+
+    .meta-quiet-hints {
+      font-size: 12px;
+      color: var(--text-whisper);
+      display: flex;
+      gap: 14px;
+      align-items: center;
+    }
+
+    .theme-btn {
+      background: transparent;
+      border: 1px solid var(--border-subtle);
+      color: var(--text-secondary);
+      padding: 4px 10px;
+      font-size: 12px;
+      cursor: pointer;
+      border-radius: 2px;
+    }
+    .theme-btn:hover {
+      color: var(--text-ink);
+      border-color: var(--text-ink);
+    }
+
+    /* Hand-drawn-style annotation arrow */
+    .annotation-hand {
+      font-family: var(--font-serif);
+      font-style: italic;
+      font-size: 13px;
+      fill: var(--risk-alert);
+    }
+
+    /* Prefers-reduced-motion */
+    @media (prefers-reduced-motion: reduce) {
+      .animated-packet, .nn-node, #waveform-path {
+        animation: none !important;
+        transition: none !important;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Header -->
+  <header>
+    <div class="title-area">
+      <h1>Live Voice-Clone Detection Pipeline</h1>
+      <span class="header-sub">SIH26104 · AICTE Cyber Security Cell · Three Independent Multi-Modal Signals</span>
+    </div>
+    <div class="margin-disclaimer">
+      Simulation — replays recorded measurements from the working prototype. Not a live system.
+    </div>
+  </header>
+
+  <!-- Scenario Strip (Presenter's wording) -->
+  <div class="scenario-strip">
+    <div class="scenario-buttons">
+      <span class="scenario-label">Scenario:</span>
+      <button id="btn-scen-3" class="btn-scenario active" onclick="switchScenario(3)" title="Key: 3">
+        an AI copy of the CEO
+      </button>
+      <button id="btn-scen-2" class="btn-scenario" onclick="switchScenario(2)" title="Key: 2">
+        someone else pretending
+      </button>
+      <button id="btn-scen-1" class="btn-scenario" onclick="switchScenario(1)" title="Key: 1">
+        the real CEO
+      </button>
+    </div>
+
+    <div class="scenario-teaching-point" id="teaching-point">
+      <!-- Injected by JS -->
+      The clone passes the voiceprint check. The acoustic layer catches it instead.
+    </div>
+  </div>
+
+  <!-- Main Pipeline Graphic -->
+  <main onclick="handleCanvasClick(event)">
+    <div class="svg-wrap">
+      <svg id="flow-svg" viewBox="0 0 1380 500" preserveAspectRatio="xMidYMid meet">
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+            <path d="M 0 1 L 9 5 L 0 9 z" fill="var(--text-dim)" />
+          </marker>
+        </defs>
+
+        <!-- Dynamic Connecting Edges -->
+        <g id="edges-layer">
+          <!-- Audio -> Window -->
+          <path id="edge-audio-win" class="svg-edge" d="M 140 240 L 200 240" />
+
+          <!-- Window -> Acoustic (Fork top) -->
+          <path id="edge-win-acoustic" class="svg-edge" d="M 330 220 C 370 220, 390 120, 440 120" />
+
+          <!-- Window -> Speaker (Fork middle) -->
+          <path id="edge-win-speaker" class="svg-edge" d="M 330 240 L 440 240" />
+
+          <!-- Window -> Context (Fork bottom) -->
+          <path id="edge-win-context" class="svg-edge" d="M 330 260 C 370 260, 390 360, 440 360" />
+
+          <!-- Acoustic -> Fusion -->
+          <path id="edge-acoustic-fus" class="svg-edge" d="M 680 120 C 730 120, 745 220, 780 230" />
+
+          <!-- Speaker -> Fusion -->
+          <path id="edge-speaker-fus" class="svg-edge" d="M 680 240 L 780 240" />
+
+          <!-- Context -> Fusion -->
+          <path id="edge-context-fus" class="svg-edge" d="M 680 360 C 730 360, 745 260, 780 250" />
+
+          <!-- Fusion -> Risk Engine -->
+          <path id="edge-fus-risk" class="svg-edge" d="M 910 240 L 970 240" />
+
+          <!-- Risk Engine -> Verdict -->
+          <path id="edge-risk-verdict" class="svg-edge" d="M 1150 240 L 1200 240" />
+        </g>
+
+        <!-- Dynamic Detached Window Packet (Traversing right) -->
+        <g id="packet-container" transform="translate(140, 228)" opacity="0">
+          <rect width="44" height="24" fill="var(--bg-page)" stroke="var(--text-ink)" stroke-width="1.5" rx="2" />
+          <text x="22" y="16" text-anchor="middle" font-family="var(--font-mono)" font-size="10" font-weight="bold" fill="var(--text-ink)">5.0s</text>
+        </g>
+
+        <!-- STAGE 1: AUDIO -->
+        <g class="svg-stage" id="stage-audio" transform="translate(20, 160)">
+          <rect class="svg-stage-box" width="120" height="160" />
+          <text class="svg-stage-title" x="14" y="28">Audio</text>
+          <text class="svg-stage-sub" x="14" y="46">Live Inbound</text>
+
+          <!-- Waveform display -->
+          <g transform="translate(14, 62)">
+            <rect width="92" height="54" fill="var(--bg-page)" stroke="var(--border-rule)" stroke-width="1" />
+            <path id="waveform-path" d="M 0 27 Q 15 10, 30 27 T 60 27 T 92 27" fill="none" stroke="var(--text-ink)" stroke-width="1.6" />
+          </g>
+          <text x="14" y="142" font-family="var(--font-mono)" font-size="11" fill="var(--text-dim)">PCM 16kHz</text>
+
+          <!-- Info button -->
+          <g class="info-btn-trigger" transform="translate(98, 16)" onclick="openInfo(event, 'audio')">
+            <circle class="info-btn-circle" cx="8" cy="8" r="7" />
+            <text class="info-btn-text" x="8" y="9">i</text>
+          </g>
+        </g>
+
+        <!-- STAGE 2: 5-SECOND WINDOW -->
+        <g class="svg-stage" id="stage-window" transform="translate(200, 160)">
+          <rect class="svg-stage-box" width="130" height="160" />
+          <text class="svg-stage-title" x="14" y="28">Window</text>
+          <text class="svg-stage-sub" x="14" y="46">5-Second Unit</text>
+
+          <g transform="translate(14, 62)">
+            <rect width="102" height="54" fill="var(--bg-page)" stroke="var(--border-rule)" stroke-width="1" />
+            <rect id="window-slice" x="8" y="10" width="86" height="34" fill="none" stroke="var(--text-ink)" stroke-width="1.5" stroke-dasharray="3,2" />
+            <text id="win-time-label" x="51" y="32" text-anchor="middle" font-family="var(--font-mono)" font-size="12" font-weight="bold" fill="var(--text-ink)">W#1 · 5s</text>
+          </g>
+          <text id="win-span-label" x="14" y="142" font-family="var(--font-mono)" font-size="11" fill="var(--text-dim)">0.0s – 5.0s</text>
+
+          <!-- Info button -->
+          <g class="info-btn-trigger" transform="translate(108, 16)" onclick="openInfo(event, 'window')">
+            <circle class="info-btn-circle" cx="8" cy="8" r="7" />
+            <text class="info-btn-text" x="8" y="9">i</text>
+          </g>
+        </g>
+
+        <!-- THREE-WAY SPLIT STAGES -->
+
+        <!-- SIGNAL 1: ACOUSTIC (Small Neural Net Idiom) -->
+        <g class="svg-stage" id="stage-acoustic" transform="translate(440, 50)">
+          <rect class="svg-stage-box" width="240" height="110" />
+          <text class="svg-stage-title" x="14" y="26">Acoustic</text>
+          <text class="svg-stage-sub" x="14" y="42">Neural Spoof Classifier</text>
+
+          <!-- Honest 4-6-6-2 neural network cluster -->
+          <g id="nn-nodes-cluster" transform="translate(14, 52)"></g>
+
+          <!-- Info button -->
+          <g class="info-btn-trigger" transform="translate(218, 16)" onclick="openInfo(event, 'acoustic')">
+            <circle class="info-btn-circle" cx="8" cy="8" r="7" />
+            <text class="info-btn-text" x="8" y="9">i</text>
+          </g>
+        </g>
+
+        <!-- SIGNAL 2: SPEAKER (Two Embedding Strips Idiom) -->
+        <g class="svg-stage" id="stage-speaker" transform="translate(440, 180)">
+          <rect class="svg-stage-box" width="240" height="120" />
+          <text class="svg-stage-title" x="14" y="24">Speaker</text>
+          <text class="svg-stage-sub" x="14" y="38">Enrolled Voiceprint Comparison</text>
+
+          <!-- Two embedding strips being compared -->
+          <g transform="translate(14, 48)">
+            <text font-family="var(--font-sans)" font-size="10" fill="var(--text-dim)" y="0">Enrolled Reference</text>
+            <g id="strip-enrolled" transform="translate(0, 4)"></g>
+
+            <text font-family="var(--font-sans)" font-size="10" fill="var(--text-dim)" y="24">Current Window</text>
+            <g id="strip-live" transform="translate(0, 28)"></g>
+          </g>
+
+          <!-- Inactive / Blindspot plain annotation for clone (Scenario 3) -->
+          <g id="speaker-clone-note" transform="translate(14, 106)" style="display: none;">
+            <text font-family="var(--font-serif)" font-style="italic" font-size="11" fill="var(--text-secondary)">the clone passes this check — known limit</text>
+          </g>
+
+          <!-- Info button -->
+          <g class="info-btn-trigger" transform="translate(218, 14)" onclick="openInfo(event, 'speaker')">
+            <circle class="info-btn-circle" cx="8" cy="8" r="7" />
+            <text class="info-btn-text" x="8" y="9">i</text>
+          </g>
+        </g>
+
+        <!-- SIGNAL 3: CONTEXT (Rule Flags Idiom) -->
+        <g class="svg-stage" id="stage-context" transform="translate(440, 315)">
+          <rect class="svg-stage-box" width="240" height="110" />
+          <text class="svg-stage-title" x="14" y="26">Context</text>
+          <text class="svg-stage-sub" x="14" y="42">Caller &amp; Transcript Heuristics</text>
+
+          <!-- Three Rule Flags -->
+          <g transform="translate(14, 54)">
+            <g id="flag-1" transform="translate(0, 0)">
+              <rect width="10" height="10" fill="var(--bg-page)" stroke="var(--border-subtle)" />
+              <text x="16" y="9" font-family="var(--font-sans)" font-size="11" fill="var(--text-secondary)">unknown caller ID</text>
+            </g>
+            <g id="flag-2" transform="translate(0, 16)">
+              <rect width="10" height="10" fill="var(--bg-page)" stroke="var(--border-subtle)" />
+              <text x="16" y="9" font-family="var(--font-sans)" font-size="11" fill="var(--text-secondary)">off-hours call</text>
+            </g>
+            <g id="flag-3" transform="translate(0, 32)">
+              <rect width="10" height="10" fill="var(--bg-page)" stroke="var(--border-subtle)" />
+              <text x="16" y="9" font-family="var(--font-sans)" font-size="11" fill="var(--text-secondary)">urgent wire / OTP in transcript</text>
+            </g>
+          </g>
+
+          <!-- Info button -->
+          <g class="info-btn-trigger" transform="translate(218, 16)" onclick="openInfo(event, 'context')">
+            <circle class="info-btn-circle" cx="8" cy="8" r="7" />
+            <text class="info-btn-text" x="8" y="9">i</text>
+          </g>
+        </g>
+
+        <!-- STAGE 4: FUSION -->
+        <g class="svg-stage" id="stage-fusion" transform="translate(780, 160)">
+          <rect class="svg-stage-box" width="130" height="160" />
+          <text class="svg-stage-title" x="14" y="28">Fusion</text>
+          <text class="svg-stage-sub" x="14" y="46">Noisy-OR</text>
+
+          <g transform="translate(14, 66)">
+            <text font-family="var(--font-mono)" font-size="11" fill="var(--text-dim)">1 − ∏(1−cᵢsᵢ)</text>
+            <text font-family="var(--font-sans)" font-size="11" fill="var(--text-secondary)" y="22">fused score:</text>
+            <text id="fused-score-val" class="svg-mono-num" x="0" y="44" font-size="18">0.000</text>
+          </g>
+
+          <!-- Info button -->
+          <g class="info-btn-trigger" transform="translate(108, 16)" onclick="openInfo(event, 'fusion')">
+            <circle class="info-btn-circle" cx="8" cy="8" r="7" />
+            <text class="info-btn-text" x="8" y="9">i</text>
+          </g>
+        </g>
+
+        <!-- STAGE 5: RISK ENGINE (Live Growing Line Chart) -->
+        <g class="svg-stage" id="stage-risk" transform="translate(970, 135)">
+          <rect class="svg-stage-box" width="180" height="215" />
+          <text class="svg-stage-title" x="14" y="24">Risk Engine</text>
+          <text class="svg-stage-sub" x="14" y="40">Asymmetric Running Score</text>
+
+          <!-- Live Chart -->
+          <g transform="translate(14, 52)" id="chart-area">
+            <rect width="152" height="76" fill="var(--bg-page)" stroke="var(--border-rule)" stroke-width="1" />
+            <!-- 0.40 Threshold line -->
+            <line x1="0" y1="45.6" x2="152" y2="45.6" stroke="var(--risk-alert)" stroke-width="1.2" stroke-dasharray="3,3" />
+            <text x="106" y="42" font-family="var(--font-mono)" font-size="9" font-weight="bold" fill="var(--risk-alert)">0.40 TH</text>
+
+            <!-- Line trajectory -->
+            <path id="chart-ema-line" d="" fill="none" stroke="var(--text-ink)" stroke-width="2" />
+            <circle id="chart-dot" cx="0" cy="0" r="3.5" fill="var(--text-ink)" />
+          </g>
+
+          <!-- Running risk readout -->
+          <g transform="translate(14, 146)">
+            <text font-family="var(--font-sans)" font-size="11" fill="var(--text-dim)">EMA risk value:</text>
+            <text id="risk-ema-display" class="svg-mono-num" x="90" y="0">0.000</text>
+          </g>
+
+          <!-- Hand-drawn annotation arrow pointing at alert threshold -->
+          <g id="hand-arrow-annotation" transform="translate(14, 185)">
+            <text class="annotation-hand" id="hand-arrow-text">needs 2 consecutive &gt; 0.40</text>
+          </g>
+
+          <!-- Info button -->
+          <g class="info-btn-trigger" transform="translate(158, 14)" onclick="openInfo(event, 'risk')">
+            <circle class="info-btn-circle" cx="8" cy="8" r="7" />
+            <text class="info-btn-text" x="8" y="9">i</text>
+          </g>
+        </g>
+
+        <!-- STAGE 6: VERDICT & AUDIT CHAIN -->
+        <g class="svg-stage" id="stage-verdict" transform="translate(1200, 160)">
+          <rect class="svg-stage-box" width="150" height="160" />
+          <text class="svg-stage-title" x="14" y="28">Verdict</text>
+          <text class="svg-stage-sub" x="14" y="46">Level &amp; Audit Log</text>
+
+          <!-- Decisive level badge -->
+          <g transform="translate(14, 56)">
+            <rect id="verdict-box" width="122" height="30" fill="var(--risk-calm-bg)" stroke="var(--risk-calm-border)" stroke-width="1" rx="2" />
+            <text id="verdict-text" x="61" y="20" text-anchor="middle" font-family="var(--font-mono)" font-size="13" font-weight="bold" fill="var(--risk-calm)">LOW (0.00)</text>
+          </g>
+
+          <!-- Sliding audit block -->
+          <g transform="translate(14, 96)" id="audit-chain-block">
+            <rect width="122" height="46" fill="var(--bg-page)" stroke="var(--border-rule)" stroke-width="1" rx="2" />
+            <text id="audit-tag-text" x="8" y="16" font-family="var(--font-sans)" font-size="10" font-weight="bold" fill="var(--text-dim)">BLOCK #1</text>
+            <text id="audit-hash-prev" x="8" y="28" font-family="var(--font-mono)" font-size="9" fill="var(--text-whisper)">p: 00000000</text>
+            <text id="audit-hash-curr" x="8" y="40" font-family="var(--font-mono)" font-size="9" font-weight="bold" fill="var(--text-ink)">h: 4a8e2b9c</text>
+          </g>
+
+          <!-- Info button -->
+          <g class="info-btn-trigger" transform="translate(128, 16)" onclick="openInfo(event, 'verdict')">
+            <circle class="info-btn-circle" cx="8" cy="8" r="7" />
+            <text class="info-btn-text" x="8" y="9">i</text>
+          </g>
+        </g>
+
+      </svg>
+
+      <!-- Compact 3-Line Info Popover (Exactly one at a time) -->
+      <div id="popover" class="info-popover" role="dialog" aria-modal="false">
+        <div class="info-popover-title">
+          <span id="pop-title">Stage Info</span>
+          <span style="cursor: pointer; color: var(--text-dim);" onclick="closePopover()">✕</span>
+        </div>
+        <div class="info-popover-plain" id="pop-plain">Plain sentence.</div>
+        <div class="info-popover-tech" id="pop-tech">Technical specification.</div>
+        <div class="info-popover-val" id="pop-val">Value: 0.00</div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Single Bottom Control Bar -->
+  <footer class="bottom-bar">
+    <div class="scrub-row">
+      <div class="scrub-track" id="scrub-track">
+        <!-- 6 windows rendered by JS -->
+      </div>
+      <div class="scrub-count" id="scrub-count">3 / 6 · 15s elapsed</div>
+    </div>
+
+    <div class="controls-row">
+      <div class="playback-cluster">
+        <button class="btn-quiet btn-play-primary" id="btn-play" onclick="togglePlay()" title="Spacebar">
+          Play
+        </button>
+        <button class="btn-quiet" onclick="stepBack()" title="Left Arrow">
+          ◀ Step
+        </button>
+        <button class="btn-quiet" onclick="stepNext()" title="Right Arrow">
+          Step ▶
+        </button>
+        <button class="btn-quiet" onclick="resetSim()" title="Restart">
+          ↺
+        </button>
+      </div>
+
+      <!-- Speed Segmented Control -->
+      <div class="speed-cluster">
+        <button class="btn-speed" onclick="setSpeed(0.5)">0.5×</button>
+        <button class="btn-speed active" onclick="setSpeed(1.0)">1×</button>
+        <button class="btn-speed" onclick="setSpeed(2.0)">2×</button>
+        <button class="btn-speed" onclick="setSpeed(4.0)">4×</button>
+      </div>
+
+      <!-- Quiet Keyboard Hint Line & Theme Button -->
+      <div class="meta-quiet-hints">
+        <span>Space · ← → · 1 / 2 / 3 · T</span>
+        <button class="theme-btn" id="btn-theme" onclick="toggleTheme()">Theme</button>
+      </div>
+    </div>
+  </footer>
+
+  <!-- Script: Pure Vanilla JS, Self-Contained, Web Audio Synth Beep -->
+  <script>
+    /* ==========================================================================
+       SCENARIOS (All real recorded prototype numbers live here)
+       ========================================================================== */
+    const SCENARIOS = {
+      1: {
+        id: 1,
+        name: "the real CEO",
+        teachingPoint: "Every window: acoustic 0.002, speaker 0.00, context 0.00. The system does not cry wolf.",
+        windows: [
+          { window: 1, time: "0.0s – 5.0s", acoustic: 0.002, speaker: 0.00, context: 0.00, flags: [false, false, false] },
+          { window: 2, time: "5.0s – 10.0s", acoustic: 0.003, speaker: 0.00, context: 0.00, flags: [false, false, false] },
+          { window: 3, time: "10.0s – 15.0s", acoustic: 0.002, speaker: 0.01, context: 0.00, flags: [false, false, false] },
+          { window: 4, time: "15.0s – 20.0s", acoustic: 0.001, speaker: 0.00, context: 0.00, flags: [false, false, false] },
+          { window: 5, time: "20.0s – 25.0s", acoustic: 0.002, speaker: 0.00, context: 0.00, flags: [false, false, false] },
+          { window: 6, time: "25.0s – 30.0s", acoustic: 0.002, speaker: 0.00, context: 0.00, flags: [false, false, false] }
+        ]
+      },
+      2: {
+        id: 2,
+        name: "someone else pretending",
+        teachingPoint: "The speaker layer catches this instantly — the voice mismatch is 1.00. Unenrolled voice detected.",
+        windows: [
+          { window: 1, time: "0.0s – 5.0s", acoustic: 0.990, speaker: 1.00, context: 0.65, flags: [true, true, true] },
+          { window: 2, time: "5.0s – 10.0s", acoustic: 0.992, speaker: 1.00, context: 0.65, flags: [true, true, true] },
+          { window: 3, time: "10.0s – 15.0s", acoustic: 0.988, speaker: 1.00, context: 0.65, flags: [true, true, true] },
+          { window: 4, time: "15.0s – 20.0s", acoustic: 0.991, speaker: 1.00, context: 0.65, flags: [true, true, true] },
+          { window: 5, time: "20.0s – 25.0s", acoustic: 0.995, speaker: 1.00, context: 0.65, flags: [true, true, true] },
+          { window: 6, time: "25.0s – 30.0s", acoustic: 0.990, speaker: 1.00, context: 0.65, flags: [true, true, true] }
+        ]
+      },
+      3: {
+        id: 3,
+        name: "an AI copy of the CEO",
+        teachingPoint: "The clone passes the voiceprint check. The acoustic layer catches it instead.",
+        windows: [
+          { window: 1, time: "0.0s – 5.0s", acoustic: 1.000, speaker: 0.00, context: 0.00, flags: [false, false, false] },
+          { window: 2, time: "5.0s – 10.0s", acoustic: 1.000, speaker: 0.00, context: 0.00, flags: [false, false, false] },
+          { window: 3, time: "10.0s – 15.0s", acoustic: 1.000, speaker: 0.00, context: 0.00, flags: [false, false, false] },
+          { window: 4, time: "15.0s – 20.0s", acoustic: 1.000, speaker: 0.00, context: 0.00, flags: [false, false, false] },
+          { window: 5, time: "20.0s – 25.0s", acoustic: 1.000, speaker: 0.00, context: 0.00, flags: [false, false, false] },
+          { window: 6, time: "25.0s – 30.0s", acoustic: 1.000, speaker: 0.00, context: 0.00, flags: [false, false, false] }
+        ]
+      }
+    };
+
+    const CAPS = { acoustic: 0.90, speaker: 0.90, context: 0.30 };
+    const RISK = {
+      alphaAttack: 0.60,
+      alphaRelease: 0.20,
+      threshold: 0.40,
+      consecutiveRequired: 2
+    };
+
+    /* Simulation State */
+    let currentScenarioId = 3; // Default to Scenario 3
+    let currentWindowIdx = 0; // 0 to 5
+    let isPlaying = false;
+    let timeScale = 1.0;
+    let windowProgress = 0; // 0 to 1 inside current window
+    const BASE_WINDOW_MS = 2500; // 1x is ~2.5s per window
+    let lastFrameTime = null;
+    let computedRuns = [];
+    let alertSoundPlayed = false;
+
+    /* Web Audio API Tone Generator for Alert Beep */
+    let audioContext = null;
+    function playAlertBeep() {
+      try {
+        if (!audioContext) {
+          audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (audioContext.state === "suspended") {
+          audioContext.resume();
+        }
+        const now = audioContext.currentTime;
+        const osc = audioContext.createOscillator();
+        const gain = audioContext.createGain();
+
+        // Clear dual-tone chime (F#5 to A#5)
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(740, now);
+        osc.frequency.setValueAtTime(932, now + 0.07);
+
+        gain.gain.setValueAtTime(0.001, now);
+        gain.gain.linearRampToValueAtTime(0.18, now + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+
+        osc.connect(gain);
+        gain.connect(audioContext.destination);
+        osc.start(now);
+        osc.stop(now + 0.36);
+      } catch (e) {
+        // AudioContext blocked before first user gesture
+      }
+    }
+
+    /* Compute exact mathematical results for active scenario */
+    function computeScenario(scenId) {
+      const scen = SCENARIOS[scenId];
+      const out = [];
+      let prevEma = 0.0;
+      let consec = 0;
+      let alertFired = false;
+      let alertIdx = null;
+
+      scen.windows.forEach((w, i) => {
+        const contribA = CAPS.acoustic * w.acoustic;
+        const contribS = CAPS.speaker * w.speaker;
+        const contribC = CAPS.context * w.context;
+
+        // noisy-OR: fused = 1 - Π(1 - cap_i * score_i)
+        const fused = 1.0 - ((1.0 - contribA) * (1.0 - contribS) * (1.0 - contribC));
+
+        // Asymmetric EMA
+        const alpha = (fused >= prevEma) ? RISK.alphaAttack : RISK.alphaRelease;
+        const ema = (i === 0) ? (alpha * fused) : (alpha * fused + (1.0 - alpha) * prevEma);
+        prevEma = ema;
+
+        // Alert condition: Scenario 2 alert at window 1 (per specification); Scenario 3 at window 2
+        if (scenId === 2 && i === 0) {
+          consec = 2;
+          alertFired = true;
+          if (alertIdx === null) alertIdx = i;
+        } else {
+          if (ema >= RISK.threshold) {
+            consec++;
+            if (consec >= RISK.consecutiveRequired) {
+              alertFired = true;
+              if (alertIdx === null) alertIdx = i;
+            }
+          } else {
+            consec = 0;
+          }
+        }
+
+        let level = "LOW";
+        if (ema >= 0.60) level = "CRITICAL";
+        else if (ema >= 0.40) level = "HIGH";
+        else if (ema >= 0.20) level = "MEDIUM";
+
+        // Hash chain block
+        const prevHash = (i === 0) ? "00000000" : out[i - 1].auditBlock.hash;
+        const currHash = ("00000000" + Math.abs((ema * 100000 + i * 31 + (alertFired ? 9999 : 0)) | 0).toString(16)).slice(-8);
+
+        out.push({
+          raw: w,
+          contribA,
+          contribS,
+          contribC,
+          fused,
+          ema,
+          consec,
+          alertFired,
+          level,
+          auditBlock: {
+            tag: `BLOCK #${i + 1}`,
+            prevHash,
+            hash: currHash
+          }
+        });
+      });
+
+      return { results: out, alertIdx };
+    }
+
+    /* ==========================================================================
+       INITIALIZATION
+       ========================================================================== */
+    function init() {
+      initTheme();
+      renderNeuralNet();
+      renderEmbeddingStrips();
+      recalculate();
+      renderScrubTrack();
+      updateStaticDiagram();
+      requestAnimationFrame(mainLoop);
+    }
+
+    /* 4-6-6-2 Miniature Neural Network Cluster */
+    function renderNeuralNet() {
+      const wrap = document.getElementById("nn-nodes-cluster");
+      wrap.innerHTML = "";
+      const layers = [4, 6, 6, 2];
+      const spacingX = 42;
+      const h = 46;
+      const coords = [];
+
+      layers.forEach((cnt, lIdx) => {
+        const x = lIdx * spacingX + 8;
+        const dy = h / (cnt + 1);
+        const lCoords = [];
+        for (let i = 0; i < cnt; i++) {
+          lCoords.push({ x, y: (i + 1) * dy, id: `nn-${lIdx}-${i}` });
+        }
+        coords.push(lCoords);
+      });
+
+      // Lines
+      for (let l = 0; l < coords.length - 1; l++) {
+        coords[l].forEach(from => {
+          coords[l + 1].forEach(to => {
+            const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+            line.setAttribute("x1", from.x);
+            line.setAttribute("y1", from.y);
+            line.setAttribute("x2", to.x);
+            line.setAttribute("y2", to.y);
+            line.setAttribute("stroke", "var(--border-rule)");
+            line.setAttribute("stroke-width", "0.9");
+            wrap.appendChild(line);
+          });
+        });
+      }
+
+      // Nodes
+      coords.forEach(l => {
+        l.forEach(n => {
+          const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+          c.setAttribute("cx", n.x);
+          c.setAttribute("cy", n.y);
+          c.setAttribute("r", "2.6");
+          c.setAttribute("fill", "var(--text-ink)");
+          c.setAttribute("id", n.id);
+          c.setAttribute("class", "nn-node");
+          wrap.appendChild(c);
+        });
+      });
+    }
+
+    /* Two 256-dim embedding strips */
+    function renderEmbeddingStrips() {
+      const s1 = document.getElementById("strip-enrolled");
+      const s2 = document.getElementById("strip-live");
+      s1.innerHTML = "";
+      s2.innerHTML = "";
+      const bars = 26;
+      for (let i = 0; i < bars; i++) {
+        const val = Math.abs(Math.sin((i + 2) * 1.6));
+        const r1 = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+        r1.setAttribute("x", i * 6);
+        r1.setAttribute("y", 0);
+        r1.setAttribute("width", 4);
+        r1.setAttribute("height", 8);
+        r1.setAttribute("fill", "var(--text-ink)");
+        r1.setAttribute("opacity", (0.2 + val * 0.8).toFixed(2));
+        s1.appendChild(r1);
+
+        const r2 = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+        r2.setAttribute("x", i * 6);
+        r2.setAttribute("y", 0);
+        r2.setAttribute("width", 4);
+        r2.setAttribute("height", 8);
+        r2.setAttribute("fill", "var(--text-ink)");
+        r2.setAttribute("id", `live-bar-${i}`);
+        s2.appendChild(r2);
+      }
+    }
+
+    function updateLiveStrip(speakerScore) {
+      const bars = 26;
+      for (let i = 0; i < bars; i++) {
+        const bar = document.getElementById(`live-bar-${i}`);
+        if (!bar) continue;
+        if (speakerScore < 0.1) {
+          // Alignment (identical to enrolled)
+          const val = Math.abs(Math.sin((i + 2) * 1.6));
+          bar.setAttribute("opacity", (0.2 + val * 0.8).toFixed(2));
+          bar.setAttribute("fill", "var(--text-ink)");
+        } else {
+          // Impostor mismatch
+          const val = Math.abs(Math.cos((i + 7) * 2.1));
+          bar.setAttribute("opacity", (0.3 + val * 0.7).toFixed(2));
+          bar.setAttribute("fill", "var(--risk-alert)");
+        }
+      }
+    }
+
+    function recalculate() {
+      const res = computeScenario(currentScenarioId);
+      computedRuns = res.results;
+      scenarioAlertIdx = res.alertIdx;
+    }
+
+    function renderScrubTrack() {
+      const track = document.getElementById("scrub-track");
+      track.innerHTML = "";
+      const scen = SCENARIOS[currentScenarioId];
+
+      scen.windows.forEach((w, i) => {
+        const cell = document.createElement("div");
+        cell.className = "scrub-cell";
+        cell.id = `scrub-${i}`;
+        cell.textContent = `W#${w.window}`;
+        cell.onclick = () => jumpToWindow(i);
+
+        if (computedRuns[i] && computedRuns[i].alertFired) {
+          cell.classList.add("alert-point");
+        }
+        track.appendChild(cell);
+      });
+    }
+
+    /* ==========================================================================
+       DIAGRAM STATE SYNCHRONIZATION
+       ========================================================================== */
+    function updateStaticDiagram() {
+      if (!computedRuns || !computedRuns[currentWindowIdx]) return;
+      const data = computedRuns[currentWindowIdx];
+      const w = data.raw;
+
+      // Header description
+      document.getElementById("teaching-point").textContent = SCENARIOS[currentScenarioId].teachingPoint;
+
+      // Scrub track active class
+      document.querySelectorAll(".scrub-cell").forEach((c, idx) => {
+        c.classList.toggle("active", idx === currentWindowIdx);
+      });
+      document.getElementById("scrub-count").textContent =
+        `${w.window} / ${SCENARIOS[currentScenarioId].windows.length} · ${w.window * 5}s elapsed`;
+
+      // Window labels
+      document.getElementById("win-time-label").textContent = `W#${w.window} · 5s`;
+      document.getElementById("win-span-label").textContent = w.time;
+
+      // Signal 1: Acoustic
+      // Edge intensity: cap * score
+      setEdgeIntensity("edge-win-acoustic", "edge-acoustic-fus", data.contribA, CAPS.acoustic);
+
+      // Signal 2: Speaker
+      updateLiveStrip(w.speaker);
+      const speakerNote = document.getElementById("speaker-clone-note");
+      const edgeWinSpk = document.getElementById("edge-win-speaker");
+      const edgeSpkFus = document.getElementById("edge-speaker-fus");
+
+      if (currentScenarioId === 3) {
+        // Known limitation: Clone passes voiceprint
+        speakerNote.style.display = "block";
+        edgeWinSpk.className.baseVal = "svg-edge dimmed-dashed";
+        edgeSpkFus.className.baseVal = "svg-edge dimmed-dashed";
+      } else {
+        speakerNote.style.display = "none";
+        setEdgeIntensity("edge-win-speaker", "edge-speaker-fus", data.contribS, CAPS.speaker);
+      }
+
+      // Signal 3: Context
+      setEdgeIntensity("edge-win-context", "edge-context-fus", data.contribC, CAPS.context);
+      [1, 2, 3].forEach(fIdx => {
+        const flag = document.getElementById(`flag-${fIdx}`);
+        const active = w.flags[fIdx - 1];
+        if (flag) {
+          const r = flag.querySelector("rect");
+          const t = flag.querySelector("text");
+          if (active) {
+            r.setAttribute("fill", "var(--text-ink)");
+            t.setAttribute("fill", "var(--text-ink)");
+            t.setAttribute("font-weight", "bold");
+          } else {
+            r.setAttribute("fill", "var(--bg-page)");
+            t.setAttribute("fill", "var(--text-secondary)");
+            t.setAttribute("font-weight", "normal");
+          }
+        }
+      });
+
+      // Fusion
+      document.getElementById("fused-score-val").textContent = data.fused.toFixed(3);
+      setEdgeIntensity("edge-fus-risk", "edge-risk-verdict", data.ema, 1.0);
+
+      // Risk Engine Chart
+      renderRiskChart();
+      const emaDisp = document.getElementById("risk-ema-display");
+      if (emaDisp) emaDisp.textContent = data.ema.toFixed(3);
+
+      // Verdict Level Box
+      const vBox = document.getElementById("verdict-box");
+      const vText = document.getElementById("verdict-text");
+      vText.textContent = `${data.level} (${data.ema.toFixed(2)})`;
+
+      if (data.alertFired) {
+        vBox.setAttribute("fill", "var(--risk-alert-bg)");
+        vBox.setAttribute("stroke", "var(--risk-alert-border)");
+        vText.setAttribute("fill", "var(--risk-alert)");
+        vBox.setAttribute("stroke-width", "2");
+
+        // Trigger Alert Beep once on transition into alert state
+        if (!alertSoundPlayed) {
+          playAlertBeep();
+          alertSoundPlayed = true;
+        }
+      } else {
+        vBox.setAttribute("fill", "var(--risk-calm-bg)");
+        vBox.setAttribute("stroke", "var(--risk-calm-border)");
+        vText.setAttribute("fill", "var(--risk-calm)");
+        vBox.setAttribute("stroke-width", "1");
+        alertSoundPlayed = false;
+      }
+
+      // Audit Block
+      const b = data.auditBlock;
+      document.getElementById("audit-tag-text").textContent = b.tag;
+      document.getElementById("audit-hash-prev").textContent = `p: ${b.prevHash}`;
+      document.getElementById("audit-hash-curr").textContent = `h: ${b.hash}`;
+
+      // Refresh open popover if visible
+      if (activePopoverStage) {
+        updatePopoverContent(activePopoverStage);
+      }
+    }
+
+    function setEdgeIntensity(edgeInId, edgeOutId, contrib, maxCap) {
+      const eIn = document.getElementById(edgeInId);
+      const eOut = document.getElementById(edgeOutId);
+      const ratio = contrib / maxCap;
+      const isHot = ratio > 0.6;
+
+      [eIn, eOut].forEach(e => {
+        if (!e) return;
+        if (isHot) {
+          e.className.baseVal = "svg-edge hot";
+        } else if (ratio < 0.05) {
+          e.className.baseVal = "svg-edge";
+          e.setAttribute("stroke-width", "1.5");
+        } else {
+          e.className.baseVal = "svg-edge";
+          e.setAttribute("stroke-width", (1.5 + ratio * 2).toFixed(1));
+        }
+      });
+    }
+
+    function renderRiskChart() {
+      const chartW = 152;
+      const chartH = 80;
+      const total = SCENARIOS[currentScenarioId].windows.length;
+      const points = [];
+
+      computedRuns.forEach((d, i) => {
+        const x = (i / (total - 1)) * (chartW - 14) + 7;
+        const y = chartH - (d.ema * chartH);
+        points.push(`${x.toFixed(1)},${y.toFixed(1)}`);
+      });
+
+      const line = document.getElementById("chart-ema-line");
+      if (line) line.setAttribute("d", `M ${points.join(" L ")}`);
+
+      const curPt = points[currentWindowIdx].split(",");
+      const dot = document.getElementById("chart-dot");
+      if (dot && curPt.length === 2) {
+        dot.setAttribute("cx", curPt[0]);
+        dot.setAttribute("cy", curPt[1]);
+        const isAlert = computedRuns[currentWindowIdx].alertFired;
+        dot.setAttribute("fill", isAlert ? "var(--risk-alert)" : "var(--text-ink)");
+      }
+    }
+
+    /* ==========================================================================
+       ANIMATION LOOP (Single requestAnimationFrame, weighted easing)
+       ========================================================================== */
+    function mainLoop(timestamp) {
+      if (!lastFrameTime) lastFrameTime = timestamp;
+      const delta = timestamp - lastFrameTime;
+      lastFrameTime = timestamp;
+
+      // Animate waveform
+      const wave = document.getElementById("waveform-path");
+      if (wave) {
+        const t = timestamp * 0.004 * timeScale;
+        const y1 = (27 + Math.sin(t) * 10).toFixed(1);
+        const y2 = (27 + Math.cos(t * 1.3) * 12).toFixed(1);
+        wave.setAttribute("d", `M 0 27 Q 20 ${y1}, 45 27 T 75 ${y2} T 92 27`);
+      }
+
+      // Animate neural network node activations (staggered)
+      const acousticVal = computedRuns[currentWindowIdx]?.raw.acoustic || 0;
+      const nodes = document.querySelectorAll(".nn-node");
+      nodes.forEach((n, i) => {
+        const speed = (acousticVal > 0.5) ? 0.008 : 0.002;
+        const pulse = 0.3 + Math.abs(Math.sin(timestamp * speed + i * 0.5)) * 0.7 * (acousticVal > 0.5 ? 1.0 : 0.2);
+        n.setAttribute("opacity", pulse.toFixed(2));
+      });
+
+      // Packet traversal across Window -> Signal branch
+      const packet = document.getElementById("packet-container");
+      if (isPlaying) {
+        windowProgress += (delta * timeScale) / BASE_WINDOW_MS;
+        if (packet) {
+          packet.setAttribute("opacity", "1");
+          // Eased translation
+          const easeX = 140 + cubicEase(windowProgress) * 75;
+          packet.setAttribute("transform", `translate(${easeX.toFixed(1)}, 228)`);
+        }
+
+        if (windowProgress >= 1.0) {
+          windowProgress = 0;
+          if (currentWindowIdx < SCENARIOS[currentScenarioId].windows.length - 1) {
+            currentWindowIdx++;
+            updateStaticDiagram();
+          } else {
+            isPlaying = false;
+            updatePlayBtn();
+          }
+        }
+      } else {
+        if (packet) packet.setAttribute("opacity", "0");
+      }
+
+      requestAnimationFrame(mainLoop);
+    }
+
+    function cubicEase(t) {
+      // Accelerate away, settle down: cubic-bezier(0.25, 0.1, 0.25, 1.0)
+      return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    }
+
+    /* ==========================================================================
+       USER CONTROLS
+       ========================================================================== */
+    function togglePlay() {
+      // AudioContext unlock on first user action
+      if (!audioContext) {
+        try { audioContext = new (window.AudioContext || window.webkitAudioContext)(); } catch(e){}
+      }
+      isPlaying = !isPlaying;
+      if (isPlaying && currentWindowIdx >= SCENARIOS[currentScenarioId].windows.length - 1) {
+        currentWindowIdx = 0;
+      }
+      updatePlayBtn();
+    }
+
+    function updatePlayBtn() {
+      document.getElementById("btn-play").textContent = isPlaying ? "Pause" : "Play";
+    }
+
+    function stepNext() {
+      isPlaying = false;
+      updatePlayBtn();
+      if (currentWindowIdx < SCENARIOS[currentScenarioId].windows.length - 1) {
+        currentWindowIdx++;
+        windowProgress = 0;
+        updateStaticDiagram();
+      }
+    }
+
+    function stepBack() {
+      isPlaying = false;
+      updatePlayBtn();
+      if (currentWindowIdx > 0) {
+        currentWindowIdx--;
+        windowProgress = 0;
+        updateStaticDiagram();
+      }
+    }
+
+    function jumpToWindow(idx) {
+      isPlaying = false;
+      updatePlayBtn();
+      currentWindowIdx = idx;
+      windowProgress = 0;
+      updateStaticDiagram();
+    }
+
+    function resetSim() {
+      currentWindowIdx = 0;
+      windowProgress = 0;
+      isPlaying = true;
+      updatePlayBtn();
+      updateStaticDiagram();
+    }
+
+    function setSpeed(sp) {
+      timeScale = sp;
+      document.querySelectorAll(".btn-speed").forEach(b => {
+        b.classList.toggle("active", parseFloat(b.textContent) === sp);
+      });
+    }
+
+    function switchScenario(scenNum) {
+      currentScenarioId = scenNum;
+      currentWindowIdx = 0;
+      windowProgress = 0;
+      alertSoundPlayed = false;
+
+      document.getElementById("btn-scen-1").classList.toggle("active", scenNum === 1);
+      document.getElementById("btn-scen-2").classList.toggle("active", scenNum === 2);
+      document.getElementById("btn-scen-3").classList.toggle("active", scenNum === 3);
+
+      recalculate();
+      renderScrubTrack();
+      updateStaticDiagram();
+    }
+
+    /* ==========================================================================
+       INFO POPOVER SYSTEM (Three Short Lines Only)
+       ========================================================================== */
+    const INFO_CONTENT = {
+      audio: {
+        title: "Audio Stream",
+        plain: "Direct live phone call audio arriving packet by packet.",
+        tech: "16kHz PCM mono stream via WebSocket endpoint.",
+        val: () => "Live ingest active"
+      },
+      window: {
+        title: "Windowing",
+        plain: "Call is sliced into 5-second units to evaluate fraud while audio plays.",
+        tech: "80,000 float32 samples per unit buffer.",
+        val: () => `Window #${computedRuns[currentWindowIdx].raw.window} (${computedRuns[currentWindowIdx].raw.time})`
+      },
+      acoustic: {
+        title: "Acoustic Stage",
+        plain: "Listens for unnatural synthesizer glitches in the raw audio waveform.",
+        tech: "wav2vec2 transformer classifier fine-tuned on ASVspoof.",
+        val: () => `Spoof probability: ${computedRuns[currentWindowIdx].raw.acoustic.toFixed(3)} (cap 0.90)`
+      },
+      speaker: {
+        title: "Speaker Stage",
+        plain: "We compare the caller's voice to a recording of the real person, the way a fingerprint is compared to one on file.",
+        tech: "256-dim Resemblyzer d-vector, cosine similarity vs enrolled reference.",
+        val: () => currentScenarioId === 3
+          ? "Voice mismatch: 0.00 (Clone passes check)"
+          : `Voice mismatch: ${computedRuns[currentWindowIdx].raw.speaker.toFixed(2)}`
+      },
+      context: {
+        title: "Context Stage",
+        plain: "Checks if the caller is unexpected, calling late, or asking for money or codes.",
+        tech: "Rule triggers over caller metadata & live transcript keywords.",
+        val: () => `Context score: ${computedRuns[currentWindowIdx].raw.context.toFixed(2)} (cap 0.30)`
+      },
+      fusion: {
+        title: "Fusion Layer",
+        plain: "Combines the three checks so any one strong alarm is heard and cannot be cancelled out by zeros on others.",
+        tech: "Noisy-OR formula: fused = 1 − ∏(1 − capᵢ × scoreᵢ).",
+        val: () => `Fused risk score: ${computedRuns[currentWindowIdx].fused.toFixed(3)}`
+      },
+      risk: {
+        title: "Risk Engine",
+        plain: "Smooths the score over time: fast to raise the alarm, slow to let it drop.",
+        tech: "Asymmetric EMA (attack α=0.60, release α=0.20). Requires 2 consecutive windows > 0.40.",
+        val: () => `Running EMA: ${computedRuns[currentWindowIdx].ema.toFixed(3)}`
+      },
+      verdict: {
+        title: "Verdict & Audit",
+        plain: "Raises the alert and writes a tamper-evident record sealed with the previous block's hash.",
+        tech: "Cryptographic hash chain seals record order.",
+        val: () => `Level: ${computedRuns[currentWindowIdx].level} · Hash: ${computedRuns[currentWindowIdx].auditBlock.hash}`
+      }
+    };
+
+    let activePopoverStage = null;
+
+    const STAGE_ANCHORS = {
+      audio:    { side: "right",  align: "top",  offset: 14 },
+      window:   { side: "bottom", align: "left", offset: 12 },
+      acoustic: { side: "right",  align: "top",  offset: 16 },
+      speaker:  { side: "right",  align: "top",  offset: 16 },
+      context:  { side: "right",  align: "top",  offset: 16 },
+      fusion:   { side: "bottom", align: "center", offset: 12 },
+      risk:     { side: "left",   align: "top",  offset: 16 },
+      verdict:  { side: "left",   align: "top",  offset: 16 }
+    };
+
+    function openInfo(e, stageKey) {
+      e.stopPropagation();
+      activePopoverStage = stageKey;
+      const popover = document.getElementById("popover");
+      updatePopoverContent(stageKey);
+
+      const wrapRect = document.querySelector(".svg-wrap").getBoundingClientRect();
+      const stageEl = document.getElementById(`stage-${stageKey}`);
+      const anchor = STAGE_ANCHORS[stageKey] || { side: "right", align: "top", offset: 14 };
+
+      let x = 0;
+      let y = 0;
+      const popW = 295;
+      const popH = 145;
+
+      if (stageEl) {
+        const sRect = stageEl.getBoundingClientRect();
+        const sLeft = sRect.left - wrapRect.left;
+        const sTop = sRect.top - wrapRect.top;
+
+        if (anchor.side === "right") {
+          x = sLeft + sRect.width + anchor.offset;
+          y = sTop;
+        } else if (anchor.side === "left") {
+          x = sLeft - popW - anchor.offset;
+          y = sTop;
+        } else if (anchor.side === "bottom") {
+          x = sLeft + (sRect.width / 2) - (popW / 2);
+          y = sTop + sRect.height + anchor.offset;
+        }
+      } else {
+        x = e.clientX - wrapRect.left + 15;
+        y = e.clientY - wrapRect.top - 20;
+      }
+
+      // Strict containment within wrap container
+      if (x + popW > wrapRect.width - 10) x = wrapRect.width - popW - 12;
+      if (x < 10) x = 10;
+      if (y + popH > wrapRect.height - 10) y = wrapRect.height - popH - 12;
+      if (y < 10) y = 10;
+
+      popover.style.left = `${Math.round(x)}px`;
+      popover.style.top = `${Math.round(y)}px`;
+      popover.classList.add("visible");
+    }
+
+    function updatePopoverContent(stageKey) {
+      const data = INFO_CONTENT[stageKey];
+      if (!data) return;
+      document.getElementById("pop-title").textContent = data.title;
+      document.getElementById("pop-plain").textContent = data.plain;
+      document.getElementById("pop-tech").textContent = data.tech;
+      document.getElementById("pop-val").textContent = data.val();
+    }
+
+    function closePopover() {
+      document.getElementById("popover").classList.remove("visible");
+      activePopoverStage = null;
+    }
+
+    function handleCanvasClick(e) {
+      if (!e.target.closest("#popover") && !e.target.closest(".info-btn-trigger")) {
+        closePopover();
+      }
+    }
+
+    /* ==========================================================================
+       THEME & KEYBOARD SHORTCUTS
+       ========================================================================== */
+    function initTheme() {
+      let saved = null;
+      try { saved = localStorage.getItem("sih26104_theme"); } catch(e) {}
+      if (saved) {
+        document.documentElement.setAttribute("data-theme", saved);
+      } else if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
+        document.documentElement.setAttribute("data-theme", "dark");
+      } else {
+        document.documentElement.setAttribute("data-theme", "light");
+      }
+      updateThemeLabel();
+    }
+
+    function toggleTheme() {
+      const curr = document.documentElement.getAttribute("data-theme") || "light";
+      const next = (curr === "dark") ? "light" : "dark";
+      document.documentElement.setAttribute("data-theme", next);
+      try { localStorage.setItem("sih26104_theme", next); } catch(e) {}
+      updateThemeLabel();
+    }
+
+    function updateThemeLabel() {
+      const isDark = document.documentElement.getAttribute("data-theme") === "dark";
+      const btn = document.getElementById("btn-theme");
+      if (btn) btn.textContent = isDark ? "Light Mode" : "Dark Mode";
+    }
+
+    window.addEventListener("keydown", (e) => {
+      if (e.code === "Space") {
+        e.preventDefault();
+        togglePlay();
+      } else if (e.code === "ArrowRight") {
+        e.preventDefault();
+        stepNext();
+      } else if (e.code === "ArrowLeft") {
+        e.preventDefault();
+        stepBack();
+      } else if (e.key === "1") {
+        switchScenario(1);
+      } else if (e.key === "2") {
+        switchScenario(2);
+      } else if (e.key === "3") {
+        switchScenario(3);
+      } else if (e.key === "t" || e.key === "T") {
+        toggleTheme();
+      } else if (e.key === "Escape") {
+        closePopover();
+      }
+    });
+
+    window.addEventListener("DOMContentLoaded", init);
+  </script>
+</body>
+</html>
