@@ -80,7 +80,7 @@ main{flex:1;display:grid;grid-template-columns:auto minmax(0,1fr);gap:28px;align
 .edges path.hot{stroke:var(--hot);stroke-width:2.6}
 .edges path.off{stroke-dasharray:3 5;opacity:.45}
 @keyframes flow{to{stroke-dashoffset:-12}}
-.node{position:absolute;transform:translate(-50%,-50%);width:146px;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:11px 13px;transition:border-color .3s,background .3s,opacity .3s,box-shadow .3s}
+.node{position:absolute;transform:translate(-50%,-50%);width:164px;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:11px 13px;transition:border-color .3s,background .3s,opacity .3s,box-shadow .3s}
 .node h5{margin:0;font-size:14px;font-weight:600}
 .node small{display:block;color:var(--dim);font-size:11.5px;margin-top:1px}
 .node .v{font-family:var(--mono);font-size:21px;margin-top:8px;font-variant-numeric:tabular-nums;min-height:28px}
@@ -110,6 +110,19 @@ footer{border-top:1px solid var(--line);padding:10px 28px 14px;display:grid;gap:
 .ctl .play{background:var(--ink);color:var(--bg);border-color:var(--ink);min-width:86px}
 .ctl .sp[aria-pressed="true"]{border-color:var(--ink)}
 .ctl .info{margin-left:auto;color:var(--dim);font-size:12px}
+
+/* info popovers */
+.ib{position:absolute;top:8px;right:8px;width:20px;height:20px;border-radius:50%;border:1px solid var(--line);background:var(--surface);color:var(--muted);font:600 11px/18px var(--sans);text-align:center;padding:0}
+.ib:hover,.ib[aria-expanded="true"]{color:var(--accent);border-color:var(--accent)}
+.node h5{padding-right:18px;white-space:nowrap}
+.phonewrap{position:relative}
+.phonewrap .ib{top:-6px;right:-6px;z-index:3}
+.pop{position:fixed;z-index:50;width:280px;background:var(--surface);border:1px solid var(--accent);border-radius:12px;padding:12px 14px;box-shadow:0 10px 30px rgba(0,0,0,.28);font-size:13px;line-height:1.45;animation:pin .15s ease-out}
+@keyframes pin{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.pop b{display:block;font-size:13.5px;margin-bottom:4px}
+.pop p{margin:0 0 8px;color:var(--ink)}
+.pop .ts{display:flex;flex-wrap:wrap;gap:5px}
+.pop .ts span{font-size:11px;font-family:var(--mono);border:1px solid var(--line);border-radius:6px;padding:1px 6px;color:var(--muted)}
 [hidden]{display:none!important}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
@@ -125,23 +138,24 @@ footer{border-top:1px solid var(--line);padding:10px 28px 14px;display:grid;gap:
 </header>
 
 <main>
-  <div class="phone"><div class="screen"><div class="notch"></div><div class="ps" id="ps"></div><div id="pa" hidden></div></div></div>
+  <div class="phonewrap"><button class="ib" data-info="phone" aria-label="About the app" aria-expanded="false">i</button><div class="phone"><div class="screen"><div class="notch"></div><div class="ps" id="ps"></div><div id="pa" hidden></div></div></div></div>
 
   <div class="flowwrap"><div class="flow" id="flow">
     <svg class="edges" id="edges"></svg>
     <div class="zone" id="zone"><span>ON THE PHONE · NOTHING UPLOADED</span></div>
-    <div class="node" id="nPolicy" style="left:7.5%;top:50%"><h5>Policy</h5><small>who is calling?</small><div class="v t" id="vPolicy"></div></div>
-    <div class="node" id="nListen" style="left:23.5%;top:50%"><h5>Listen</h5><small>5 s window</small><div class="v" id="vListen"></div></div>
-    <div class="node" id="nA" style="left:42%;top:17%"><h5>Synthetic voice?</h5><small>deepfake model</small><div class="v" id="vA"></div></div>
-    <div class="node" id="nS" style="left:42%;top:50%"><h5>Same person?</h5><small>voiceprint</small><div class="v" id="vS"></div></div>
-    <div class="node" id="nC" style="left:42%;top:83%"><h5>Scam context?</h5><small>number + phrases</small><div class="v" id="vC"></div></div>
-    <div class="node" id="nF" style="left:60%;top:50%"><h5>Fusion</h5><small>noisy-OR</small><div class="v" id="vF"></div></div>
-    <div class="node" id="nR" style="left:76.5%;top:50%;width:156px"><h5>Risk</h5><small>2 windows ≥ 0.40</small><div class="v" id="vR"></div><svg class="spark" id="spark" viewBox="0 0 100 34" preserveAspectRatio="none"></svg></div>
-    <div class="node" id="nV" style="left:92%;top:50%;width:124px"><h5>Verdict</h5><small>alert + audit</small><div class="v t" id="vV"></div><div class="blk" id="blk"></div></div>
+    <div class="node" id="nPolicy" style="left:7.5%;top:50%"><button class="ib" data-info="policy" aria-label="About this step" aria-expanded="false">i</button><h5>Policy</h5><small>who is calling?</small><div class="v t" id="vPolicy"></div></div>
+    <div class="node" id="nListen" style="left:23.5%;top:50%"><button class="ib" data-info="listen" aria-label="About this step" aria-expanded="false">i</button><h5>Listen</h5><small>5 s window</small><div class="v" id="vListen"></div></div>
+    <div class="node" id="nA" style="left:42%;top:20%"><button class="ib" data-info="acoustic" aria-label="About this step" aria-expanded="false">i</button><h5>Synthetic voice?</h5><small>deepfake model</small><div class="v" id="vA"></div></div>
+    <div class="node" id="nS" style="left:42%;top:50%"><button class="ib" data-info="speaker" aria-label="About this step" aria-expanded="false">i</button><h5>Same person?</h5><small>voiceprint</small><div class="v" id="vS"></div></div>
+    <div class="node" id="nC" style="left:42%;top:80%"><button class="ib" data-info="context" aria-label="About this step" aria-expanded="false">i</button><h5>Scam context?</h5><small>number + phrases</small><div class="v" id="vC"></div></div>
+    <div class="node" id="nF" style="left:60%;top:50%"><button class="ib" data-info="fusion" aria-label="About this step" aria-expanded="false">i</button><h5>Fusion</h5><small>noisy-OR</small><div class="v" id="vF"></div></div>
+    <div class="node" id="nR" style="left:76.5%;top:50%;width:164px"><button class="ib" data-info="risk" aria-label="About this step" aria-expanded="false">i</button><h5>Risk</h5><small>2 windows ≥ 0.40</small><div class="v" id="vR"></div><svg class="spark" id="spark" viewBox="0 0 100 34" preserveAspectRatio="none"></svg></div>
+    <div class="node" id="nV" style="left:92%;top:50%;width:140px"><button class="ib" data-info="verdict" aria-label="About this step" aria-expanded="false">i</button><h5>Verdict</h5><small>alert + audit</small><div class="v t" id="vV"></div><div class="blk" id="blk"></div></div>
   </div></div>
 </main>
 
 <div class="take" id="take"></div>
+<div class="pop" id="pop" role="dialog" hidden></div>
 <footer>
   <div class="wins" id="wins"></div>
   <div class="ctl">
@@ -153,7 +167,7 @@ footer{border-top:1px solid var(--line);padding:10px 28px 14px;display:grid;gap:
     <button class="sp" data-s="0.5" aria-pressed="false">0.5×</button>
     <button class="sp" data-s="1" aria-pressed="true">1×</button>
     <button class="sp" data-s="2" aria-pressed="false">2×</button>
-    <span class="info">Space · ← → · 1–7 · T &nbsp;·&nbsp; scores: measured reference values of the app's demo audio</span>
+    <span class="info">ⓘ on any panel · Space · ← → · 1–7 · T &nbsp;·&nbsp; scores: measured reference values of the app's demo audio</span>
   </div>
 </footer>
 
@@ -286,6 +300,30 @@ $("theme").onclick=theme;
 document.addEventListener("keydown",function(e){var k=e.key;
   if(k===" "){e.preventDefault();playing?stop():play();}else if(k==="ArrowRight"){e.preventDefault();next();}else if(k==="ArrowLeft"){e.preventDefault();back();}
   else if(k==="r"||k==="R")reset();else if(k==="t"||k==="T")theme();else{var s=SC.filter(function(x){return x.k===k})[0];if(s)pick(s);}});
+
+/* info popovers: what each panel does + tech stack */
+var INFO={
+ phone:["SwarKavach app","What the person on the call sees: the live risk gauge and the full-screen warning.",["Kotlin","Jetpack Compose","Material 3","Hindi + English","all models on-device"]],
+ policy:["Policy","Decides if this call needs checking: unknown numbers always, trusted contacts skipped.",["CallScreeningService","TelephonyCallback","Contacts lookup","Kotlin PolicyEngine"]],
+ listen:["Listen","Captures the caller's voice in 5-second windows and removes your own voice.",["AccessibilityService","AudioRecord 16 kHz","Silero VAD (ONNX)","owner voiceprint filter"]],
+ acoustic:["Synthetic voice?","Scores how likely the voice is AI-generated.",["wav2vec2 deepfake model","ONNX Runtime Android","~650 ms / window"]],
+ speaker:["Same person?","Compares the voice with the saved voiceprint of the person you protect.",["WeSpeaker ResNet34","256-number voiceprint","sherpa-onnx","cosine 0.80 / 0.55"]],
+ context:["Scam context?","Flags risky signs: unknown number, odd hours, phrases like OTP or CBI.",["Kotlin rule engine","Vosk offline ASR (en-IN)","word-boundary matching"]],
+ fusion:["Fusion","Combines the three checks; one strong check can raise risk, context alone can't.",["noisy-OR","caps 0.90 / 0.90 / 0.30","Python = Kotlin (300/300 tests)"]],
+ risk:["Risk","Smooths scores over time and alerts only if risk stays high for 2 windows.",["asymmetric EMA 0.60 / 0.20","2-window rule","threshold 0.40"]],
+ verdict:["Verdict","Warns you full-screen and seals a tamper-evident record of the alert.",["full-screen notification","1930 · cybercrime.gov.in · Chakshu","SHA-256 hash chain","Room DB"]]
+};
+var openBtn=null;
+function closePop(){var p=$("pop");p.hidden=true;if(openBtn){openBtn.setAttribute("aria-expanded","false");openBtn=null;}}
+function openPop(btn){var d=INFO[btn.dataset.info],p=$("pop");if(openBtn===btn){closePop();return;}closePop();
+  p.innerHTML="<b>"+d[0]+"</b><p>"+d[1]+"</p><div class=\"ts\">"+d[2].map(function(t){return "<span>"+t+"</span>"}).join("")+"</div>";
+  p.hidden=false;var r=btn.getBoundingClientRect(),w=p.offsetWidth,h=p.offsetHeight;
+  var x=Math.min(Math.max(8,r.left+r.width/2-w/2),window.innerWidth-w-8),y=r.bottom+8;if(y+h>window.innerHeight-8)y=r.top-h-8;
+  p.style.left=x+"px";p.style.top=Math.max(8,y)+"px";btn.setAttribute("aria-expanded","true");openBtn=btn;}
+document.querySelectorAll(".ib").forEach(function(b){b.addEventListener("click",function(e){e.stopPropagation();openPop(b);});});
+document.addEventListener("click",function(e){if(openBtn&&!$("pop").contains(e.target))closePop();});
+window.addEventListener("resize",closePop);window.addEventListener("scroll",closePop,true);
+document.addEventListener("keydown",function(e){if(e.key==="Escape")closePop();});
 window.addEventListener("resize",drawEdges);
 scen();render();requestAnimationFrame(drawEdges);
 })();
