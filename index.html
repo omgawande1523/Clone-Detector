@@ -1,1676 +1,527 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SIH26104 · Voice-Clone Defense Pipeline</title>
-  <style>
-    /* ==========================================================================
-       DESIGN SYSTEM: EDITORIAL / INK-ON-PAPER
-       Restraint as governing principle.
-       Single accent color reserved for elevated risk.
-       Serif headings, high contrast, tabular numbers, hairline rules.
-       No gradients on text, no glassmorphism, no neon glows, no emojis.
-       ========================================================================== */
-    :root {
-      --bg-page: #fbf9f5;
-      --bg-surface: #ffffff;
-      --border-rule: #e5dfd5;
-      --border-subtle: #d6cec2;
-      --border-focus: #1c1917;
-
-      --text-ink: #1c1917;
-      --text-secondary: #57534e;
-      --text-dim: #78716c;
-      --text-whisper: #a8a29e;
-
-      /* Risk accent: restrained ink tones, red appears ONLY when risk elevates */
-      --risk-calm: #44403c;
-      --risk-calm-bg: #f5f2eb;
-      --risk-calm-border: #d6cec2;
-
-      --risk-alert: #b91c1c;
-      --risk-alert-bg: #fef2f2;
-      --risk-alert-border: #b91c1c;
-
-      /* Edge paths */
-      --edge-idle: #ded7cc;
-      --edge-active: #292524;
-      --edge-hot: #b91c1c;
-
-      /* Popover */
-      --popover-bg: #ffffff;
-      --popover-shadow: 0 4px 16px rgba(28, 25, 23, 0.08);
-
-      --font-serif: Georgia, "Nimbus Roman No9 L", "Century Schoolbook L", serif;
-      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    }
-
-    [data-theme="dark"] {
-      --bg-page: #141210;
-      --bg-surface: #1a1816;
-      --border-rule: #2a2622;
-      --border-subtle: #38332d;
-      --border-focus: #f5f5f4;
-
-      --text-ink: #f5f5f4;
-      --text-secondary: #a8a29e;
-      --text-dim: #78716c;
-      --text-whisper: #57534e;
-
-      --risk-calm: #a8a29e;
-      --risk-calm-bg: #211e1a;
-      --risk-calm-border: #38332d;
-
-      --risk-alert: #ef4444;
-      --risk-alert-bg: #261313;
-      --risk-alert-border: #ef4444;
-
-      --edge-idle: #262320;
-      --edge-active: #d6d3d1;
-      --edge-hot: #ef4444;
-
-      --popover-bg: #1c1916;
-      --popover-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
-    }
-
-    @media (prefers-color-scheme: dark) {
-      :root:not([data-theme="light"]) {
-        --bg-page: #141210;
-        --bg-surface: #1a1816;
-        --border-rule: #2a2622;
-        --border-subtle: #38332d;
-        --border-focus: #f5f5f4;
-
-        --text-ink: #f5f5f4;
-        --text-secondary: #a8a29e;
-        --text-dim: #78716c;
-        --text-whisper: #57534e;
-
-        --risk-calm: #a8a29e;
-        --risk-calm-bg: #211e1a;
-        --risk-calm-border: #38332d;
-
-        --risk-alert: #ef4444;
-        --risk-alert-bg: #261313;
-        --risk-alert-border: #ef4444;
-
-        --edge-idle: #262320;
-        --edge-active: #d6d3d1;
-        --edge-hot: #ef4444;
-
-        --popover-bg: #1c1916;
-        --popover-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
-      }
-    }
-
-    /* Reset & Layout */
-    *, *::before, *::after {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-    }
-
-    body {
-      font-family: var(--font-sans);
-      font-size: 16px;
-      line-height: 1.5;
-      color: var(--text-ink);
-      background-color: var(--bg-page);
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-      overflow-x: hidden;
-      transition: background-color 0.2s ease, color 0.2s ease;
-      user-select: none;
-    }
-
-    /* Header & Margin Note */
-    header {
-      padding: 24px 36px 18px 36px;
-      display: flex;
-      justify-content: space-between;
-      align-items: baseline;
-      border-bottom: 1px solid var(--border-rule);
-      position: relative;
-    }
-
-    .title-area {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-    }
-
-    h1 {
-      font-family: var(--font-serif);
-      font-size: 26px;
-      font-weight: normal;
-      letter-spacing: -0.3px;
-      color: var(--text-ink);
-    }
-
-    .header-sub {
-      font-size: 14px;
-      color: var(--text-secondary);
-      letter-spacing: 0.2px;
-    }
-
-    /* Askew margin note for simulation disclaimer */
-    .margin-disclaimer {
-      font-family: var(--font-serif);
-      font-style: italic;
-      font-size: 13px;
-      color: var(--text-dim);
-      transform: rotate(-1deg);
-      border-left: 2px solid var(--border-subtle);
-      padding-left: 10px;
-      max-width: 400px;
-      line-height: 1.4;
-    }
-
-    /* Scenario Bar (Presenter's Own Words) */
-    .scenario-strip {
-      padding: 14px 36px;
-      border-bottom: 1px solid var(--border-rule);
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 20px;
-      background: var(--bg-surface);
-    }
-
-    .scenario-buttons {
-      display: flex;
-      gap: 10px;
-      align-items: center;
-    }
-
-    .scenario-label {
-      font-size: 13px;
-      font-weight: 600;
-      color: var(--text-dim);
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      margin-right: 4px;
-    }
-
-    .btn-scenario {
-      background: transparent;
-      border: 1px solid var(--border-subtle);
-      color: var(--text-secondary);
-      padding: 6px 14px;
-      font-family: var(--font-sans);
-      font-size: 14px;
-      cursor: pointer;
-      border-radius: 3px;
-      transition: all 0.15s ease;
-    }
-
-    .btn-scenario:hover {
-      border-color: var(--text-ink);
-      color: var(--text-ink);
-    }
-
-    .btn-scenario.active {
-      border-color: var(--border-focus);
-      background: var(--text-ink);
-      color: var(--bg-page);
-      font-weight: 600;
-    }
-
-    .scenario-teaching-point {
-      font-family: var(--font-serif);
-      font-size: 15px;
-      color: var(--text-secondary);
-      font-style: italic;
-      max-width: 580px;
-      text-align: right;
-    }
-
-    /* Main Canvas Area */
-    main {
-      flex: 1;
-      position: relative;
-      padding: 16px 24px 8px 24px;
-      display: flex;
-      align-items: center;
-      justify-content: flex-start;
-      overflow: hidden;
-    }
-
-    .svg-wrap {
-      width: 100%;
-      max-width: 1400px;
-      height: 100%;
-      min-height: 520px;
-      margin-left: 12px; /* Deliberate asymmetry: sits slightly left */
-      position: relative;
-    }
-
-    svg#flow-svg {
-      width: 100%;
-      height: 100%;
-      display: block;
-    }
-
-    /* Typography inside SVG */
-    .svg-stage-title {
-      font-family: var(--font-serif);
-      font-size: 17px;
-      fill: var(--text-ink);
-    }
-
-    .svg-stage-sub {
-      font-family: var(--font-sans);
-      font-size: 12px;
-      fill: var(--text-dim);
-      font-weight: 500;
-    }
-
-    .svg-mono-num {
-      font-family: var(--font-mono);
-      font-variant-numeric: tabular-nums;
-      font-size: 15px;
-      font-weight: 700;
-      fill: var(--text-ink);
-    }
-
-    /* Hairline Stage Borders */
-    .svg-stage-box {
-      fill: var(--bg-surface);
-      stroke: var(--border-subtle);
-      stroke-width: 1;
-      rx: 2;
-    }
-
-    /* Edge lines */
-    .svg-edge {
-      fill: none;
-      stroke: var(--edge-idle);
-      stroke-width: 1.5;
-      stroke-linecap: round;
-      transition: stroke 0.3s ease, stroke-width 0.3s ease;
-    }
-
-    .svg-edge.hot {
-      stroke: var(--edge-hot);
-      stroke-width: 3;
-    }
-
-    .svg-edge.dimmed-dashed {
-      stroke-dasharray: 4, 4;
-      stroke: var(--border-subtle);
-      opacity: 0.6;
-    }
-
-    /* Info button style */
-    .info-btn-trigger {
-      cursor: pointer;
-    }
-    .info-btn-circle {
-      fill: transparent;
-      stroke: var(--border-subtle);
-      stroke-width: 1;
-      transition: all 0.15s ease;
-    }
-    .info-btn-text {
-      font-family: var(--font-serif);
-      font-style: italic;
-      font-size: 11px;
-      fill: var(--text-dim);
-      text-anchor: middle;
-      dominant-baseline: central;
-    }
-    .info-btn-trigger:hover .info-btn-circle {
-      stroke: var(--text-ink);
-      fill: var(--border-rule);
-    }
-    .info-btn-trigger:hover .info-btn-text {
-      fill: var(--text-ink);
-    }
-
-    /* Single Info Popover */
-    .info-popover {
-      position: absolute;
-      width: 290px;
-      background: var(--popover-bg);
-      border: 1px solid var(--border-focus);
-      box-shadow: var(--popover-shadow);
-      padding: 14px 16px;
-      z-index: 100;
-      display: none;
-      border-radius: 2px;
-      pointer-events: auto;
-    }
-
-    .info-popover.visible {
-      display: block;
-    }
-
-    .info-popover-title {
-      font-family: var(--font-serif);
-      font-size: 14px;
-      font-weight: bold;
-      color: var(--text-ink);
-      margin-bottom: 6px;
-      border-bottom: 1px solid var(--border-rule);
-      padding-bottom: 4px;
-      display: flex;
-      justify-content: space-between;
-    }
-
-    .info-popover-plain {
-      font-size: 13.5px;
-      color: var(--text-ink);
-      line-height: 1.4;
-      margin-bottom: 8px;
-    }
-
-    .info-popover-tech {
-      font-size: 12px;
-      color: var(--text-dim);
-      font-family: var(--font-mono);
-      line-height: 1.35;
-      margin-bottom: 8px;
-      border-top: 1px dashed var(--border-rule);
-      padding-top: 6px;
-    }
-
-    .info-popover-val {
-      font-size: 13px;
-      font-weight: 600;
-      color: var(--text-ink);
-      font-family: var(--font-mono);
-      font-variant-numeric: tabular-nums;
-    }
-
-    /* Bottom Control Bar */
-    .bottom-bar {
-      padding: 12px 36px 14px 36px;
-      border-top: 1px solid var(--border-rule);
-      background: var(--bg-surface);
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-    }
-
-    .scrub-row {
-      display: flex;
-      align-items: center;
-      gap: 16px;
-    }
-
-    .scrub-track {
-      flex: 1;
-      height: 24px;
-      display: flex;
-      gap: 6px;
-      align-items: center;
-    }
-
-    .scrub-cell {
-      flex: 1;
-      height: 100%;
-      border: 1px solid var(--border-rule);
-      background: var(--bg-page);
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 0 10px;
-      font-size: 12px;
-      font-family: var(--font-mono);
-      color: var(--text-secondary);
-      cursor: pointer;
-      position: relative;
-    }
-
-    .scrub-cell:hover {
-      border-color: var(--text-ink);
-    }
-
-    .scrub-cell.active {
-      border-color: var(--border-focus);
-      background: var(--border-rule);
-      color: var(--text-ink);
-      font-weight: 700;
-    }
-
-    .scrub-cell.alert-point::after {
-      content: "ALERT";
-      font-family: var(--font-sans);
-      font-size: 9px;
-      font-weight: 800;
-      letter-spacing: 0.5px;
-      color: var(--risk-alert);
-      background: var(--risk-alert-bg);
-      border: 1px solid var(--risk-alert-border);
-      padding: 1px 4px;
-      border-radius: 2px;
-    }
-
-    .scrub-count {
-      font-family: var(--font-mono);
-      font-size: 13px;
-      font-weight: 600;
-      color: var(--text-ink);
-      min-width: 140px;
-      text-align: right;
-    }
-
-    .controls-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-
-    .playback-cluster {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .btn-quiet {
-      background: transparent;
-      border: 1px solid var(--border-subtle);
-      color: var(--text-ink);
-      padding: 6px 14px;
-      font-size: 14px;
-      font-family: var(--font-sans);
-      cursor: pointer;
-      border-radius: 2px;
-    }
-    .btn-quiet:hover {
-      border-color: var(--text-ink);
-      background: var(--border-rule);
-    }
-
-    .btn-play-primary {
-      font-weight: 600;
-      min-width: 86px;
-      border-color: var(--border-focus);
-    }
-
-    .speed-cluster {
-      display: flex;
-      border: 1px solid var(--border-subtle);
-      border-radius: 2px;
-      overflow: hidden;
-    }
-
-    .btn-speed {
-      background: transparent;
-      border: none;
-      border-right: 1px solid var(--border-subtle);
-      color: var(--text-secondary);
-      padding: 5px 10px;
-      font-size: 13px;
-      font-family: var(--font-mono);
-      cursor: pointer;
-    }
-    .btn-speed:last-child {
-      border-right: none;
-    }
-    .btn-speed:hover {
-      color: var(--text-ink);
-    }
-    .btn-speed.active {
-      background: var(--border-rule);
-      color: var(--text-ink);
-      font-weight: 700;
-    }
-
-    .meta-quiet-hints {
-      font-size: 12px;
-      color: var(--text-whisper);
-      display: flex;
-      gap: 14px;
-      align-items: center;
-    }
-
-    .theme-btn {
-      background: transparent;
-      border: 1px solid var(--border-subtle);
-      color: var(--text-secondary);
-      padding: 4px 10px;
-      font-size: 12px;
-      cursor: pointer;
-      border-radius: 2px;
-    }
-    .theme-btn:hover {
-      color: var(--text-ink);
-      border-color: var(--text-ink);
-    }
-
-    /* Hand-drawn-style annotation arrow */
-    .annotation-hand {
-      font-family: var(--font-serif);
-      font-style: italic;
-      font-size: 13px;
-      fill: var(--risk-alert);
-    }
-
-    /* Prefers-reduced-motion */
-    @media (prefers-reduced-motion: reduce) {
-      .animated-packet, .nn-node, #waveform-path {
-        animation: none !important;
-        transition: none !important;
-      }
-    }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SwarKavach · On-device Voice-Clone Shield</title>
+<meta name="description" content="SIH26104 simulation: how the SwarKavach phone app checks a call for an AI-cloned voice, entirely on the phone.">
+<style>
+/* Self-contained: no CDN, no web fonts, no network. Runs from a USB stick.
+   Palette follows the Android app (ui/theme/Theme.kt). */
+:root{
+  --bg:#F7FAFC; --surface:#FFFFFF; --surface2:#EEF3F6; --ink:#171C1F; --muted:#4F5A60; --dim:#6B757A; --line:#D6DEE3;
+  --accent:#00546B; --accent-soft:#D8F1FB; --on-accent:#FFFFFF;
+  --low:#1B6E35; --low-bg:#DDF2E4; --med:#8A5A00; --med-bg:#FFF0C7; --high:#C2410C; --high-bg:#FFE6D8; --crit:#B3261E; --crit-bg:#FBE0DE;
+  --phone-bg:#0F1417; --phone-ink:#DEE3E6; --phone-muted:#9AA6AD; --phone-card:#182126; --phone-accent:#65D3FF;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans","Helvetica Neue",Arial,sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+}
+[data-theme="dark"]{
+  --bg:#0B1013; --surface:#121A1F; --surface2:#18232A; --ink:#DEE3E6; --muted:#A9B4BA; --dim:#7D888E; --line:#25323A;
+  --accent:#65D3FF; --accent-soft:#0F3442; --on-accent:#003546;
+  --low:#5BD27E; --low-bg:#123222; --med:#FFC94D; --med-bg:#3A2E0F; --high:#FF8A50; --high-bg:#3E2213; --crit:#FF6B6B; --crit-bg:#431A1D;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.num{font-variant-numeric:tabular-nums;font-family:var(--mono)}
+.wrap{max-width:1440px;margin:0 auto;padding:0 20px}
+
+/* header */
+header.top{border-bottom:1px solid var(--line);background:var(--surface)}
+header .wrap{display:flex;align-items:center;gap:18px;padding-block:12px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:10px;margin-right:auto}
+.brand b{font-size:19px;letter-spacing:.01em}
+.brand small{display:block;color:var(--muted);font-size:12px;letter-spacing:.04em;text-transform:uppercase}
+.tabs{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.tabs button{border:0;background:transparent;padding:7px 14px;cursor:pointer;color:var(--muted)}
+.tabs button[aria-pressed="true"]{background:var(--accent);color:var(--on-accent)}
+.ghost{border:1px solid var(--line);background:transparent;border-radius:8px;padding:7px 12px;cursor:pointer;color:var(--muted)}
+.ghost:hover{color:var(--ink)}
+
+/* scenario bar */
+.scen{display:flex;gap:8px;flex-wrap:wrap;padding-block:14px}
+.scen button{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:6px 12px;cursor:pointer;color:var(--muted);font-size:13.5px}
+.scen button kbd{font-family:var(--mono);font-size:11px;border:1px solid var(--line);border-radius:4px;padding:0 4px;margin-right:6px;color:var(--dim)}
+.scen button[aria-pressed="true"]{border-color:var(--accent);color:var(--ink);background:var(--accent-soft)}
+.scen button.known{border-style:dashed}
+
+/* main grid */
+.grid{display:grid;grid-template-columns:340px minmax(0,1fr);gap:20px;align-items:start}
+@media (max-width:980px){.grid{grid-template-columns:1fr}}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px;min-width:0}
+.card h3{margin:0 0 10px;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600}
+
+/* phone */
+.phone{width:320px;max-width:100%;margin:0 auto;background:#05080A;border-radius:38px;padding:12px;box-shadow:0 10px 40px rgba(0,0,0,.35)}
+.screen{background:var(--phone-bg);color:var(--phone-ink);border-radius:28px;height:600px;overflow:hidden;position:relative;display:flex;flex-direction:column}
+.notch{width:96px;height:22px;background:#05080A;border-radius:0 0 14px 14px;margin:0 auto;flex:none}
+.sbar{display:flex;justify-content:space-between;font-size:11px;color:var(--phone-muted);padding:2px 18px 6px;flex:none}
+.pscreen{flex:1;padding:6px 16px 16px;display:flex;flex-direction:column;gap:10px;overflow:hidden}
+.ptag{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--phone-accent)}
+.caller{text-align:center;margin-top:34px}
+.caller .av{width:76px;height:76px;border-radius:50%;margin:0 auto 12px;display:grid;place-items:center;font-size:30px;font-weight:700;background:#21323A;color:var(--phone-accent)}
+.caller .nm{font-size:24px;font-weight:600}
+.caller .sub{color:var(--phone-muted);font-size:13px}
+.pchip{display:inline-block;font-size:12px;font-weight:600;padding:3px 10px;border-radius:999px;background:#1E3A46;color:#BDE9FF}
+.pcard{background:var(--phone-card);border-radius:14px;padding:12px;font-size:13px}
+.pcard b{display:block;margin-bottom:2px}
+.pcard.notif{border-left:4px solid var(--phone-accent)}
+.ring{animation:ring 1s ease-in-out infinite}
+@keyframes ring{0%,100%{transform:rotate(0)}20%{transform:rotate(-8deg)}40%{transform:rotate(8deg)}60%{transform:rotate(-4deg)}}
+.callbtns{display:flex;justify-content:space-around;margin-top:auto;padding-bottom:6px}
+.callbtns span{width:54px;height:54px;border-radius:50%;display:grid;place-items:center;font-size:12px;font-weight:700}
+.gauge{position:relative;height:120px;margin-top:2px}
+.gauge svg{width:100%;height:100%}
+.gval{position:absolute;left:0;right:0;bottom:4px;text-align:center}
+.gval .pct{font-size:30px;font-weight:700}
+.lvl{display:inline-block;font-size:11.5px;font-weight:700;letter-spacing:.04em;padding:2px 9px;border-radius:999px}
+.lvl.LOW{background:#1B6E35;color:#fff}.lvl.MEDIUM{background:#FFC94D;color:#2B1D00}.lvl.HIGH{background:#C2410C;color:#fff}.lvl.CRITICAL{background:#B3261E;color:#fff}
+.sig{display:grid;grid-template-columns:1fr auto;gap:2px 8px;font-size:12.5px}
+.sig .bar{grid-column:1/-1;height:6px;border-radius:3px;background:#24323A;overflow:hidden}
+.sig .bar i{display:block;height:100%;background:var(--phone-accent);transition:width .5s}
+.sig .na{color:var(--phone-muted);font-style:italic}
+.palert{position:absolute;inset:44px 10px 12px;background:#2A0D10;border:2px solid #FF6B6B;border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:10px;animation:pop .35s ease-out}
+@keyframes pop{from{transform:scale(.92);opacity:0}to{transform:none;opacity:1}}
+.palert h4{margin:0;font-size:19px;line-height:1.25;color:#FFB4AB}
+.palert p{margin:0;font-size:13.5px}
+.palert .pb{border:1px solid #6B2B2F;border-radius:10px;padding:8px 10px;font-size:12.5px;background:#3A1418}
+.pdemo{position:absolute;top:30px;right:14px;font-size:10px;font-weight:700;letter-spacing:.1em;color:#05080A;background:var(--phone-accent);border-radius:4px;padding:1px 6px}
+
+/* pipeline */
+.pipe{display:grid;gap:8px}
+.stage{display:grid;grid-template-columns:34px minmax(0,1fr) auto;gap:10px;align-items:center;border:1px solid var(--line);border-radius:10px;padding:9px 12px;background:var(--surface);transition:border-color .25s,background .25s,opacity .25s}
+.stage .n{width:28px;height:28px;border-radius:50%;border:1.5px solid var(--line);display:grid;place-items:center;font-family:var(--mono);font-size:12px;color:var(--muted)}
+.stage .t b{display:block;font-size:14px}
+.stage .t span{display:block;color:var(--muted);font-size:12.5px}
+.stage .v{text-align:right;font-family:var(--mono);font-size:12.5px;white-space:nowrap}
+.stage .v small{display:block;color:var(--dim);font-family:var(--sans);font-size:11px}
+.stage.active{border-color:var(--accent);background:var(--accent-soft)}
+.stage.active .n{border-color:var(--accent);color:var(--accent)}
+.stage.done .n{border-color:var(--accent);color:var(--accent)}
+.stage.skip{opacity:.45}
+.stage.hot{border-color:var(--crit);background:var(--crit-bg)}
+.checks{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-left:44px}
+@media (max-width:700px){.checks{grid-template-columns:1fr;margin-left:0}}
+.check{border:1px solid var(--line);border-radius:10px;padding:9px 11px;transition:border-color .25s,background .25s,opacity .25s}
+.check b{font-size:13.5px;display:block}
+.check span{color:var(--muted);font-size:12px;display:block}
+.check .cv{font-family:var(--mono);font-size:18px;margin-top:4px}
+.check .cv small{font-size:11px;color:var(--dim);font-family:var(--sans)}
+.check.active{border-color:var(--accent);background:var(--accent-soft)}
+.check.hot{border-color:var(--crit);background:var(--crit-bg)}
+.check.skip{opacity:.45}
+.boundary{border:1.5px dashed var(--accent);border-radius:14px;padding:12px;position:relative}
+.card .boundary::before{background:var(--surface)}
+.boundary::before{content:"ON THE PHONE · NOTHING UPLOADED";position:absolute;top:-9px;left:14px;background:var(--bg);padding:0 8px;font-size:11px;letter-spacing:.08em;color:var(--accent);font-weight:600}
+
+/* controls + timeline */
+.controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.controls .primary{background:var(--accent);color:var(--on-accent);border-color:var(--accent)}
+.controls .spacer{margin-left:auto}
+.speed button[aria-pressed="true"]{color:var(--ink);border-color:var(--accent)}
+.tl{overflow-x:auto;margin-top:12px}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+th{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600}
+td.num,th.num{text-align:right}
+tr.cur td{background:var(--accent-soft)}
+tr.future td{color:var(--dim)}
+tr.alert td{background:var(--crit-bg)}
+.barcell{width:150px}
+.mini{position:relative;height:10px;background:var(--surface2);border-radius:5px;overflow:hidden}
+.mini i{position:absolute;left:0;top:0;bottom:0;background:var(--accent);border-radius:5px}
+.mini .thr{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--crit);left:40%}
+.chip{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.04em;padding:1px 8px;border-radius:999px}
+.chip.LOW{background:var(--low-bg);color:var(--low)}.chip.MEDIUM{background:var(--med-bg);color:var(--med)}.chip.HIGH{background:var(--high-bg);color:var(--high)}.chip.CRITICAL{background:var(--crit-bg);color:var(--crit)}
+
+.lower{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:20px;margin-top:20px}
+@media (max-width:980px){.lower{grid-template-columns:1fr}}
+.teach p{margin:0 0 8px}
+.teach .measured{border-left:3px solid var(--accent);padding-left:10px;color:var(--muted);font-size:13.5px}
+.teach .limit{border-left:3px solid var(--med);padding-left:10px;color:var(--muted);font-size:13.5px}
+.chain{display:grid;gap:8px}
+.blk{border:1px solid var(--line);border-radius:10px;padding:9px 11px;font-size:12px}
+.blk b{font-size:12.5px}
+.blk code{font-family:var(--mono);font-size:11px;color:var(--muted);word-break:break-all;display:block}
+.blk.bad{border-color:var(--crit);background:var(--crit-bg)}
+.verify{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;align-items:center}
+.ok{color:var(--low);font-weight:700}.bad-t{color:var(--crit);font-weight:700}
+
+/* architecture view */
+.arch h2{font-size:26px;margin:22px 0 4px}
+.arch .lede{color:var(--muted);max-width:75ch;margin:0 0 18px}
+.flow{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:10px}
+@media (max-width:1100px){.flow{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.flow .f{border:1px solid var(--line);border-radius:12px;padding:12px;background:var(--surface);position:relative}
+.flow .f .k{font-family:var(--mono);font-size:12px;color:var(--accent)}
+.flow .f b{display:block;margin:4px 0}
+.flow .f span{font-size:12.5px;color:var(--muted);display:block}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:20px;margin-top:20px}
+.pill{display:inline-block;font-size:11px;font-weight:700;padding:1px 8px;border-radius:999px}
+.pill.g{background:var(--low-bg);color:var(--low)}.pill.r{background:var(--crit-bg);color:var(--crit)}.pill.b{background:var(--accent-soft);color:var(--accent)}.pill.a{background:var(--med-bg);color:var(--med)}
+.stat{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}
+.stat div{border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.stat b{display:block;font-size:20px;font-family:var(--mono)}
+.stat span{font-size:12.5px;color:var(--muted)}
+ul.tight{margin:0;padding-left:18px}
+ul.tight li{margin:4px 0}
+footer{color:var(--dim);font-size:12.5px;padding-block:28px 24px}
+footer kbd{font-family:var(--mono);border:1px solid var(--line);border-radius:4px;padding:0 5px}
+[hidden]{display:none!important}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
 </head>
 <body>
+<header class="top"><div class="wrap">
+  <div class="brand">
+    <svg width="34" height="34" viewBox="0 0 48 48" aria-hidden="true"><path d="M24 4 40 10v13c0 10.5-6.9 18.6-16 21-9.1-2.4-16-10.5-16-21V10z" fill="var(--accent)"/><path d="M14 25h3l2-6 3 12 3-15 3 12 2-3h4" fill="none" stroke="var(--bg)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <div><b>SwarKavach</b><small>SIH26104 · on-device voice-clone shield · simulation</small></div>
+  </div>
+  <div class="tabs" role="group" aria-label="View">
+    <button id="tabSim" aria-pressed="true">Simulation</button>
+    <button id="tabArch" aria-pressed="false">Architecture</button>
+  </div>
+  <button class="ghost" id="btnTheme" title="T">Light / dark</button>
+</div></header>
 
-  <!-- Top Header -->
-  <header>
-    <div class="title-area">
-      <h1>Live Voice-Clone Detection Pipeline</h1>
-      <span class="header-sub">SIH26104 · AICTE Cyber Security Cell · Three Independent Multi-Modal Signals</span>
+<main id="viewSim" class="wrap">
+  <div class="scen" id="scenBar" role="group" aria-label="Scenarios"></div>
+  <div class="grid">
+    <div>
+      <div class="phone"><div class="screen">
+        <div class="notch"></div>
+        <div class="sbar"><span id="pClock">10:42</span><span>5G · 82%</span></div>
+        <span class="pdemo">SIMULATION</span>
+        <div class="pscreen" id="pScreen"></div>
+        <div id="pAlert" hidden></div>
+      </div></div>
     </div>
-    <div class="margin-disclaimer">
-      Simulation — replays recorded measurements from the working prototype. Not a live system.
-    </div>
-  </header>
-
-  <!-- Scenario Strip (Presenter's wording) -->
-  <div class="scenario-strip">
-    <div class="scenario-buttons">
-      <span class="scenario-label">Scenario:</span>
-      <button id="btn-scen-3" class="btn-scenario active" onclick="switchScenario(3)" title="Key: 3">
-        an AI copy of the CEO
-      </button>
-      <button id="btn-scen-2" class="btn-scenario" onclick="switchScenario(2)" title="Key: 2">
-        someone else pretending
-      </button>
-      <button id="btn-scen-1" class="btn-scenario" onclick="switchScenario(1)" title="Key: 1">
-        the real CEO
-      </button>
-    </div>
-
-    <div class="scenario-teaching-point" id="teaching-point">
-      <!-- Injected by JS -->
-      The clone passes the voiceprint check. The acoustic layer catches it instead.
+    <div class="card">
+      <div class="controls">
+        <button class="ghost primary" id="btnPlay" title="Space">▶ Play</button>
+        <button class="ghost" id="btnBack" title="←">◀ Step</button>
+        <button class="ghost" id="btnNext" title="→">Step ▶</button>
+        <button class="ghost" id="btnReset" title="R">Restart</button>
+        <span class="spacer"></span>
+        <span class="speed" role="group" aria-label="Speed">
+          <button class="ghost" data-speed="0.5" aria-pressed="false">0.5×</button>
+          <button class="ghost" data-speed="1" aria-pressed="true">1×</button>
+          <button class="ghost" data-speed="2" aria-pressed="false">2×</button>
+        </span>
+      </div>
+      <p id="stepLabel" style="margin:12px 0 10px;color:var(--muted);font-size:13.5px"></p>
+      <div class="boundary">
+        <div class="pipe">
+          <div class="stage" id="s1"><div class="n">1</div><div class="t"><b>Decide whether to check</b><span>Call-screening service + contacts lookup → policy engine</span></div><div class="v" id="v1"></div></div>
+          <div class="stage" id="s2"><div class="n">2</div><div class="t"><b>Get the caller's voice</b><span>Live mic capture (speakerphone) · after-call recording · built-in</span></div><div class="v" id="v2"></div></div>
+          <div class="stage" id="s3"><div class="n">3</div><div class="t"><b>Clean the audio</b><span>5 s window · Silero VAD · your own voice removed (owner voiceprint)</span></div><div class="v" id="v3"></div></div>
+          <div class="checks">
+            <div class="check" id="c1"><b>Voice authenticity</b><span>wav2vec2 deepfake model · ONNX</span><div class="cv" id="cv1">–</div></div>
+            <div class="check" id="c2"><b>Matches the saved voice</b><span>WeSpeaker voiceprint · 256 numbers</span><div class="cv" id="cv2">–</div></div>
+            <div class="check" id="c3"><b>Call context</b><span>number rules + scam phrases (Vosk en-IN)</span><div class="cv" id="cv3">–</div></div>
+          </div>
+          <div class="stage" id="s5"><div class="n">5</div><div class="t"><b>Combine (noisy-OR)</b><span>1 − (1 − 0.9·a)(1 − 0.9·s)(1 − 0.3·c) · context alone can never alert</span></div><div class="v" id="v5"></div></div>
+          <div class="stage" id="s6"><div class="n">6</div><div class="t"><b>Risk engine</b><span>EMA rises fast (0.60), falls slowly (0.20) · alert = 2 windows in a row ≥ 0.40</span></div><div class="v" id="v6"></div></div>
+          <div class="stage" id="s7"><div class="n">7</div><div class="t"><b>Alert + audit</b><span>Full-screen warning · report to 1930 · SHA-256 hash-chained record</span></div><div class="v" id="v7"></div></div>
+        </div>
+      </div>
+      <div class="tl"><table>
+        <thead><tr><th>Window</th><th>Audio</th><th class="num">Acoustic</th><th class="num">Speaker</th><th class="num">Context</th><th class="num">Window score</th><th class="barcell">vs 0.40 line</th><th class="num">EMA</th><th>Level</th><th>Alert</th></tr></thead>
+        <tbody id="tlBody"></tbody>
+      </table></div>
     </div>
   </div>
 
-  <!-- Main Pipeline Graphic -->
-  <main onclick="handleCanvasClick(event)">
-    <div class="svg-wrap">
-      <svg id="flow-svg" viewBox="0 0 1380 500" preserveAspectRatio="xMidYMid meet">
-        <defs>
-          <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto">
-            <path d="M 0 1 L 9 5 L 0 9 z" fill="var(--text-dim)" />
-          </marker>
-        </defs>
-
-        <!-- Dynamic Connecting Edges -->
-        <g id="edges-layer">
-          <!-- Audio -> Window -->
-          <path id="edge-audio-win" class="svg-edge" d="M 140 240 L 200 240" />
-
-          <!-- Window -> Acoustic (Fork top) -->
-          <path id="edge-win-acoustic" class="svg-edge" d="M 330 220 C 370 220, 390 120, 440 120" />
-
-          <!-- Window -> Speaker (Fork middle) -->
-          <path id="edge-win-speaker" class="svg-edge" d="M 330 240 L 440 240" />
-
-          <!-- Window -> Context (Fork bottom) -->
-          <path id="edge-win-context" class="svg-edge" d="M 330 260 C 370 260, 390 360, 440 360" />
-
-          <!-- Acoustic -> Fusion -->
-          <path id="edge-acoustic-fus" class="svg-edge" d="M 680 120 C 730 120, 745 220, 780 230" />
-
-          <!-- Speaker -> Fusion -->
-          <path id="edge-speaker-fus" class="svg-edge" d="M 680 240 L 780 240" />
-
-          <!-- Context -> Fusion -->
-          <path id="edge-context-fus" class="svg-edge" d="M 680 360 C 730 360, 745 260, 780 250" />
-
-          <!-- Fusion -> Risk Engine -->
-          <path id="edge-fus-risk" class="svg-edge" d="M 910 240 L 970 240" />
-
-          <!-- Risk Engine -> Verdict -->
-          <path id="edge-risk-verdict" class="svg-edge" d="M 1150 240 L 1200 240" />
-        </g>
-
-        <!-- Dynamic Detached Window Packet (Traversing right) -->
-        <g id="packet-container" transform="translate(140, 228)" opacity="0">
-          <rect width="44" height="24" fill="var(--bg-page)" stroke="var(--text-ink)" stroke-width="1.5" rx="2" />
-          <text x="22" y="16" text-anchor="middle" font-family="var(--font-mono)" font-size="10" font-weight="bold" fill="var(--text-ink)">5.0s</text>
-        </g>
-
-        <!-- STAGE 1: AUDIO -->
-        <g class="svg-stage" id="stage-audio" transform="translate(20, 160)">
-          <rect class="svg-stage-box" width="120" height="160" />
-          <text class="svg-stage-title" x="14" y="28">Audio</text>
-          <text class="svg-stage-sub" x="14" y="46">Live Inbound</text>
-
-          <!-- Waveform display -->
-          <g transform="translate(14, 62)">
-            <rect width="92" height="54" fill="var(--bg-page)" stroke="var(--border-rule)" stroke-width="1" />
-            <path id="waveform-path" d="M 0 27 Q 15 10, 30 27 T 60 27 T 92 27" fill="none" stroke="var(--text-ink)" stroke-width="1.6" />
-          </g>
-          <text x="14" y="142" font-family="var(--font-mono)" font-size="11" fill="var(--text-dim)">PCM 16kHz</text>
-
-          <!-- Info button -->
-          <g class="info-btn-trigger" transform="translate(98, 16)" onclick="openInfo(event, 'audio')">
-            <circle class="info-btn-circle" cx="8" cy="8" r="7" />
-            <text class="info-btn-text" x="8" y="9">i</text>
-          </g>
-        </g>
-
-        <!-- STAGE 2: 5-SECOND WINDOW -->
-        <g class="svg-stage" id="stage-window" transform="translate(200, 160)">
-          <rect class="svg-stage-box" width="130" height="160" />
-          <text class="svg-stage-title" x="14" y="28">Window</text>
-          <text class="svg-stage-sub" x="14" y="46">5-Second Unit</text>
-
-          <g transform="translate(14, 62)">
-            <rect width="102" height="54" fill="var(--bg-page)" stroke="var(--border-rule)" stroke-width="1" />
-            <rect id="window-slice" x="8" y="10" width="86" height="34" fill="none" stroke="var(--text-ink)" stroke-width="1.5" stroke-dasharray="3,2" />
-            <text id="win-time-label" x="51" y="32" text-anchor="middle" font-family="var(--font-mono)" font-size="12" font-weight="bold" fill="var(--text-ink)">W#1 · 5s</text>
-          </g>
-          <text id="win-span-label" x="14" y="142" font-family="var(--font-mono)" font-size="11" fill="var(--text-dim)">0.0s – 5.0s</text>
-
-          <!-- Info button -->
-          <g class="info-btn-trigger" transform="translate(108, 16)" onclick="openInfo(event, 'window')">
-            <circle class="info-btn-circle" cx="8" cy="8" r="7" />
-            <text class="info-btn-text" x="8" y="9">i</text>
-          </g>
-        </g>
-
-        <!-- THREE-WAY SPLIT STAGES -->
-
-        <!-- SIGNAL 1: ACOUSTIC (Small Neural Net Idiom) -->
-        <g class="svg-stage" id="stage-acoustic" transform="translate(440, 50)">
-          <rect class="svg-stage-box" width="240" height="110" />
-          <text class="svg-stage-title" x="14" y="26">Acoustic</text>
-          <text class="svg-stage-sub" x="14" y="42">Neural Spoof Classifier</text>
-
-          <!-- Honest 4-6-6-2 neural network cluster -->
-          <g id="nn-nodes-cluster" transform="translate(14, 52)"></g>
-
-          <!-- Info button -->
-          <g class="info-btn-trigger" transform="translate(218, 16)" onclick="openInfo(event, 'acoustic')">
-            <circle class="info-btn-circle" cx="8" cy="8" r="7" />
-            <text class="info-btn-text" x="8" y="9">i</text>
-          </g>
-        </g>
-
-        <!-- SIGNAL 2: SPEAKER (Two Embedding Strips Idiom) -->
-        <g class="svg-stage" id="stage-speaker" transform="translate(440, 180)">
-          <rect class="svg-stage-box" width="240" height="120" />
-          <text class="svg-stage-title" x="14" y="24">Speaker</text>
-          <text class="svg-stage-sub" x="14" y="38">Enrolled Voiceprint Comparison</text>
-
-          <!-- Two embedding strips being compared -->
-          <g transform="translate(14, 48)">
-            <text font-family="var(--font-sans)" font-size="10" fill="var(--text-dim)" y="0">Enrolled Reference</text>
-            <g id="strip-enrolled" transform="translate(0, 4)"></g>
-
-            <text font-family="var(--font-sans)" font-size="10" fill="var(--text-dim)" y="24">Current Window</text>
-            <g id="strip-live" transform="translate(0, 28)"></g>
-          </g>
-
-          <!-- Inactive / Blindspot plain annotation for clone (Scenario 3) -->
-          <g id="speaker-clone-note" transform="translate(14, 106)" style="display: none;">
-            <text font-family="var(--font-serif)" font-style="italic" font-size="11" fill="var(--text-secondary)">the clone passes this check — known limit</text>
-          </g>
-
-          <!-- Info button -->
-          <g class="info-btn-trigger" transform="translate(218, 14)" onclick="openInfo(event, 'speaker')">
-            <circle class="info-btn-circle" cx="8" cy="8" r="7" />
-            <text class="info-btn-text" x="8" y="9">i</text>
-          </g>
-        </g>
-
-        <!-- SIGNAL 3: CONTEXT (Rule Flags Idiom) -->
-        <g class="svg-stage" id="stage-context" transform="translate(440, 315)">
-          <rect class="svg-stage-box" width="240" height="110" />
-          <text class="svg-stage-title" x="14" y="26">Context</text>
-          <text class="svg-stage-sub" x="14" y="42">Caller &amp; Transcript Heuristics</text>
-
-          <!-- Three Rule Flags -->
-          <g transform="translate(14, 54)">
-            <g id="flag-1" transform="translate(0, 0)">
-              <rect width="10" height="10" fill="var(--bg-page)" stroke="var(--border-subtle)" />
-              <text x="16" y="9" font-family="var(--font-sans)" font-size="11" fill="var(--text-secondary)">unknown caller ID</text>
-            </g>
-            <g id="flag-2" transform="translate(0, 16)">
-              <rect width="10" height="10" fill="var(--bg-page)" stroke="var(--border-subtle)" />
-              <text x="16" y="9" font-family="var(--font-sans)" font-size="11" fill="var(--text-secondary)">off-hours call</text>
-            </g>
-            <g id="flag-3" transform="translate(0, 32)">
-              <rect width="10" height="10" fill="var(--bg-page)" stroke="var(--border-subtle)" />
-              <text x="16" y="9" font-family="var(--font-sans)" font-size="11" fill="var(--text-secondary)">urgent wire / OTP in transcript</text>
-            </g>
-          </g>
-
-          <!-- Info button -->
-          <g class="info-btn-trigger" transform="translate(218, 16)" onclick="openInfo(event, 'context')">
-            <circle class="info-btn-circle" cx="8" cy="8" r="7" />
-            <text class="info-btn-text" x="8" y="9">i</text>
-          </g>
-        </g>
-
-        <!-- STAGE 4: FUSION -->
-        <g class="svg-stage" id="stage-fusion" transform="translate(780, 160)">
-          <rect class="svg-stage-box" width="130" height="160" />
-          <text class="svg-stage-title" x="14" y="28">Fusion</text>
-          <text class="svg-stage-sub" x="14" y="46">Noisy-OR</text>
-
-          <g transform="translate(14, 66)">
-            <text font-family="var(--font-mono)" font-size="11" fill="var(--text-dim)">1 − ∏(1−cᵢsᵢ)</text>
-            <text font-family="var(--font-sans)" font-size="11" fill="var(--text-secondary)" y="22">fused score:</text>
-            <text id="fused-score-val" class="svg-mono-num" x="0" y="44" font-size="18">0.000</text>
-          </g>
-
-          <!-- Info button -->
-          <g class="info-btn-trigger" transform="translate(108, 16)" onclick="openInfo(event, 'fusion')">
-            <circle class="info-btn-circle" cx="8" cy="8" r="7" />
-            <text class="info-btn-text" x="8" y="9">i</text>
-          </g>
-        </g>
-
-        <!-- STAGE 5: RISK ENGINE (Live Growing Line Chart) -->
-        <g class="svg-stage" id="stage-risk" transform="translate(970, 135)">
-          <rect class="svg-stage-box" width="180" height="215" />
-          <text class="svg-stage-title" x="14" y="24">Risk Engine</text>
-          <text class="svg-stage-sub" x="14" y="40">Asymmetric Running Score</text>
-
-          <!-- Live Chart -->
-          <g transform="translate(14, 52)" id="chart-area">
-            <rect width="152" height="76" fill="var(--bg-page)" stroke="var(--border-rule)" stroke-width="1" />
-            <!-- 0.40 Threshold line -->
-            <line x1="0" y1="45.6" x2="152" y2="45.6" stroke="var(--risk-alert)" stroke-width="1.2" stroke-dasharray="3,3" />
-            <text x="106" y="42" font-family="var(--font-mono)" font-size="9" font-weight="bold" fill="var(--risk-alert)">0.40 TH</text>
-
-            <!-- Line trajectory -->
-            <path id="chart-ema-line" d="" fill="none" stroke="var(--text-ink)" stroke-width="2" />
-            <circle id="chart-dot" cx="0" cy="0" r="3.5" fill="var(--text-ink)" />
-          </g>
-
-          <!-- Running risk readout -->
-          <g transform="translate(14, 146)">
-            <text font-family="var(--font-sans)" font-size="11" fill="var(--text-dim)">EMA risk value:</text>
-            <text id="risk-ema-display" class="svg-mono-num" x="90" y="0">0.000</text>
-          </g>
-
-          <!-- Hand-drawn annotation arrow pointing at alert threshold -->
-          <g id="hand-arrow-annotation" transform="translate(14, 185)">
-            <text class="annotation-hand" id="hand-arrow-text">needs 2 consecutive &gt; 0.40</text>
-          </g>
-
-          <!-- Info button -->
-          <g class="info-btn-trigger" transform="translate(158, 14)" onclick="openInfo(event, 'risk')">
-            <circle class="info-btn-circle" cx="8" cy="8" r="7" />
-            <text class="info-btn-text" x="8" y="9">i</text>
-          </g>
-        </g>
-
-        <!-- STAGE 6: VERDICT & AUDIT CHAIN -->
-        <g class="svg-stage" id="stage-verdict" transform="translate(1200, 160)">
-          <rect class="svg-stage-box" width="150" height="160" />
-          <text class="svg-stage-title" x="14" y="28">Verdict</text>
-          <text class="svg-stage-sub" x="14" y="46">Level &amp; Audit Log</text>
-
-          <!-- Decisive level badge -->
-          <g transform="translate(14, 56)">
-            <rect id="verdict-box" width="122" height="30" fill="var(--risk-calm-bg)" stroke="var(--risk-calm-border)" stroke-width="1" rx="2" />
-            <text id="verdict-text" x="61" y="20" text-anchor="middle" font-family="var(--font-mono)" font-size="13" font-weight="bold" fill="var(--risk-calm)">LOW (0.00)</text>
-          </g>
-
-          <!-- Sliding audit block -->
-          <g transform="translate(14, 96)" id="audit-chain-block">
-            <rect width="122" height="46" fill="var(--bg-page)" stroke="var(--border-rule)" stroke-width="1" rx="2" />
-            <text id="audit-tag-text" x="8" y="16" font-family="var(--font-sans)" font-size="10" font-weight="bold" fill="var(--text-dim)">BLOCK #1</text>
-            <text id="audit-hash-prev" x="8" y="28" font-family="var(--font-mono)" font-size="9" fill="var(--text-whisper)">p: 00000000</text>
-            <text id="audit-hash-curr" x="8" y="40" font-family="var(--font-mono)" font-size="9" font-weight="bold" fill="var(--text-ink)">h: 4a8e2b9c</text>
-          </g>
-
-          <!-- Info button -->
-          <g class="info-btn-trigger" transform="translate(128, 16)" onclick="openInfo(event, 'verdict')">
-            <circle class="info-btn-circle" cx="8" cy="8" r="7" />
-            <text class="info-btn-text" x="8" y="9">i</text>
-          </g>
-        </g>
-
-      </svg>
-
-      <!-- Compact 3-Line Info Popover (Exactly one at a time) -->
-      <div id="popover" class="info-popover" role="dialog" aria-modal="false">
-        <div class="info-popover-title">
-          <span id="pop-title">Stage Info</span>
-          <span style="cursor: pointer; color: var(--text-dim);" onclick="closePopover()">✕</span>
-        </div>
-        <div class="info-popover-plain" id="pop-plain">Plain sentence.</div>
-        <div class="info-popover-tech" id="pop-tech">Technical specification.</div>
-        <div class="info-popover-val" id="pop-val">Value: 0.00</div>
-      </div>
+  <div class="lower">
+    <div class="card teach"><h3>What this scenario shows</h3><div id="teach"></div></div>
+    <div class="card"><h3>Tamper-evident alert log</h3>
+      <div class="chain" id="chain"></div>
+      <div class="verify"><button class="ghost" id="btnVerify">Verify chain</button><button class="ghost" id="btnTamper">Tamper with a record</button><span id="verifyOut"></span></div>
     </div>
-  </main>
+  </div>
+</main>
 
-  <!-- Single Bottom Control Bar -->
-  <footer class="bottom-bar">
-    <div class="scrub-row">
-      <div class="scrub-track" id="scrub-track">
-        <!-- 6 windows rendered by JS -->
-      </div>
-      <div class="scrub-count" id="scrub-count">3 / 6 · 15s elapsed</div>
+<main id="viewArch" class="wrap arch" hidden>
+  <h2>How SwarKavach protects a phone</h2>
+  <p class="lede">The same three-check design as our enterprise server, moved onto the phone. Every model runs on the device; audio is analysed in 5-second windows in memory and thrown away. Only scores, reasons and a hashed number are stored.</p>
+  <div class="boundary"><div class="flow">
+    <div class="f"><span class="k">1</span><b>Policy</b><span>Unknown numbers always checked. Contacts set to Ignore are skipped. "Protect" contacts get their voice verified.</span></div>
+    <div class="f"><span class="k">2</span><b>Capture</b><span>Live (accessibility + mic on speaker), after-call recording scan, or built-in system access.</span></div>
+    <div class="f"><span class="k">3</span><b>Clean</b><span>Silero VAD keeps speech; owner voiceprint removes your own side of the call.</span></div>
+    <div class="f"><span class="k">4</span><b>Three checks</b><span>Synthetic voice (wav2vec2) · voiceprint match (WeSpeaker) · scam context (rules + offline speech recognition).</span></div>
+    <div class="f"><span class="k">5</span><b>Fusion</b><span>Noisy-OR with caps 0.90 / 0.90 / 0.30: one strong signal can alert; context alone never can.</span></div>
+    <div class="f"><span class="k">6</span><b>Risk engine</b><span>Asymmetric EMA + two-window rule, so a cough or line glitch can't trigger an alarm.</span></div>
+    <div class="f"><span class="k">7</span><b>Act</b><span>Full-screen alert, 1930 / cybercrime.gov.in / Chakshu, hash-chained audit record.</span></div>
+  </div></div>
+
+  <div class="cols">
+    <div class="card"><h3>Three ways to hear the caller</h3>
+      <table><thead><tr><th>Mode</th><th>How</th><th>Play Store</th></tr></thead><tbody>
+        <tr><td><b>Live</b></td><td style="white-space:normal">Accessibility service + foreground mic service while the call is on speaker. Starts automatically or with one tap.</td><td><span class="pill r">sideload / enterprise</span></td></tr>
+        <tr><td><b>After-call</b></td><td style="white-space:normal">Scans the dialer's own recording seconds after hang-up and warns before you act on the call.</td><td><span class="pill g">allowed</span></td></tr>
+        <tr><td><b>Built-in</b></td><td style="white-space:normal">Pre-installed by a phone maker or operator with system call-audio permission (the production path).</td><td><span class="pill g">allowed</span></td></tr>
+      </tbody></table>
+      <p style="color:var(--muted);font-size:13px;margin:10px 0 0">Android does not give ordinary apps call audio since Android 10, so we designed around it instead of pretending otherwise.</p>
     </div>
-
-    <div class="controls-row">
-      <div class="playback-cluster">
-        <button class="btn-quiet btn-play-primary" id="btn-play" onclick="togglePlay()" title="Spacebar">
-          Play
-        </button>
-        <button class="btn-quiet" onclick="stepBack()" title="Left Arrow">
-          ◀ Step
-        </button>
-        <button class="btn-quiet" onclick="stepNext()" title="Right Arrow">
-          Step ▶
-        </button>
-        <button class="btn-quiet" onclick="resetSim()" title="Restart">
-          ↺
-        </button>
-      </div>
-
-      <!-- Speed Segmented Control -->
-      <div class="speed-cluster">
-        <button class="btn-speed" onclick="setSpeed(0.5)">0.5×</button>
-        <button class="btn-speed active" onclick="setSpeed(1.0)">1×</button>
-        <button class="btn-speed" onclick="setSpeed(2.0)">2×</button>
-        <button class="btn-speed" onclick="setSpeed(4.0)">4×</button>
-      </div>
-
-      <!-- Quiet Keyboard Hint Line & Theme Button -->
-      <div class="meta-quiet-hints">
-        <span>Space · ← → · 1 / 2 / 3 · T</span>
-        <button class="theme-btn" id="btn-theme" onclick="toggleTheme()">Theme</button>
-      </div>
+    <div class="card"><h3>Who to protect (the user decides)</h3>
+      <table><thead><tr><th>Caller</th><th>Default</th></tr></thead><tbody>
+        <tr><td style="white-space:normal">Unknown number</td><td><span class="pill r">always check</span></td></tr>
+        <tr><td style="white-space:normal">Contact set to Ignore</td><td><span class="pill g">skip, no battery</span></td></tr>
+        <tr><td style="white-space:normal">Contact set to Protect (family, boss)</td><td><span class="pill b">verify the voice</span></td></tr>
+        <tr><td style="white-space:normal">International number</td><td><span class="pill r">always check</span></td></tr>
+        <tr><td style="white-space:normal">"Bank" not calling from a 1600-series number</td><td><span class="pill a">raise context</span></td></tr>
+      </tbody></table>
+      <p style="color:var(--muted);font-size:13px;margin:10px 0 0">Learning is opt-in: voiceprints of Protect contacts are built from your own past call recordings (256 numbers each, never audio).</p>
     </div>
-  </footer>
-
-  <!-- Script: Pure Vanilla JS, Self-Contained, Web Audio Synth Beep -->
-  <script>
-    /* ==========================================================================
-       SCENARIOS (All real recorded prototype numbers live here)
-       ========================================================================== */
-    const SCENARIOS = {
-      1: {
-        id: 1,
-        name: "the real CEO",
-        teachingPoint: "Every window: acoustic 0.002, speaker 0.00, context 0.00. The system does not cry wolf.",
-        windows: [
-          { window: 1, time: "0.0s – 5.0s", acoustic: 0.002, speaker: 0.00, context: 0.00, flags: [false, false, false] },
-          { window: 2, time: "5.0s – 10.0s", acoustic: 0.003, speaker: 0.00, context: 0.00, flags: [false, false, false] },
-          { window: 3, time: "10.0s – 15.0s", acoustic: 0.002, speaker: 0.01, context: 0.00, flags: [false, false, false] },
-          { window: 4, time: "15.0s – 20.0s", acoustic: 0.001, speaker: 0.00, context: 0.00, flags: [false, false, false] },
-          { window: 5, time: "20.0s – 25.0s", acoustic: 0.002, speaker: 0.00, context: 0.00, flags: [false, false, false] },
-          { window: 6, time: "25.0s – 30.0s", acoustic: 0.002, speaker: 0.00, context: 0.00, flags: [false, false, false] }
-        ]
-      },
-      2: {
-        id: 2,
-        name: "someone else pretending",
-        teachingPoint: "The speaker layer catches this instantly — the voice mismatch is 1.00. Unenrolled voice detected.",
-        windows: [
-          { window: 1, time: "0.0s – 5.0s", acoustic: 0.990, speaker: 1.00, context: 0.65, flags: [true, true, true] },
-          { window: 2, time: "5.0s – 10.0s", acoustic: 0.992, speaker: 1.00, context: 0.65, flags: [true, true, true] },
-          { window: 3, time: "10.0s – 15.0s", acoustic: 0.988, speaker: 1.00, context: 0.65, flags: [true, true, true] },
-          { window: 4, time: "15.0s – 20.0s", acoustic: 0.991, speaker: 1.00, context: 0.65, flags: [true, true, true] },
-          { window: 5, time: "20.0s – 25.0s", acoustic: 0.995, speaker: 1.00, context: 0.65, flags: [true, true, true] },
-          { window: 6, time: "25.0s – 30.0s", acoustic: 0.990, speaker: 1.00, context: 0.65, flags: [true, true, true] }
-        ]
-      },
-      3: {
-        id: 3,
-        name: "an AI copy of the CEO",
-        teachingPoint: "The clone passes the voiceprint check. The acoustic layer catches it instead.",
-        windows: [
-          { window: 1, time: "0.0s – 5.0s", acoustic: 1.000, speaker: 0.00, context: 0.00, flags: [false, false, false] },
-          { window: 2, time: "5.0s – 10.0s", acoustic: 1.000, speaker: 0.00, context: 0.00, flags: [false, false, false] },
-          { window: 3, time: "10.0s – 15.0s", acoustic: 1.000, speaker: 0.00, context: 0.00, flags: [false, false, false] },
-          { window: 4, time: "15.0s – 20.0s", acoustic: 1.000, speaker: 0.00, context: 0.00, flags: [false, false, false] },
-          { window: 5, time: "20.0s – 25.0s", acoustic: 1.000, speaker: 0.00, context: 0.00, flags: [false, false, false] },
-          { window: 6, time: "25.0s – 30.0s", acoustic: 1.000, speaker: 0.00, context: 0.00, flags: [false, false, false] }
-        ]
-      }
-    };
-
-    const CAPS = { acoustic: 0.90, speaker: 0.90, context: 0.30 };
-    const RISK = {
-      alphaAttack: 0.60,
-      alphaRelease: 0.20,
-      threshold: 0.40,
-      consecutiveRequired: 2
-    };
-
-    /* Simulation State */
-    let currentScenarioId = 3; // Default to Scenario 3
-    let currentWindowIdx = 0; // 0 to 5
-    let isPlaying = false;
-    let timeScale = 1.0;
-    let windowProgress = 0; // 0 to 1 inside current window
-    const BASE_WINDOW_MS = 2500; // 1x is ~2.5s per window
-    let lastFrameTime = null;
-    let computedRuns = [];
-    let alertSoundPlayed = false;
-
-    /* Web Audio API Tone Generator for Alert Beep */
-    let audioContext = null;
-    function playAlertBeep() {
-      try {
-        if (!audioContext) {
-          audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        }
-        if (audioContext.state === "suspended") {
-          audioContext.resume();
-        }
-        const now = audioContext.currentTime;
-        const osc = audioContext.createOscillator();
-        const gain = audioContext.createGain();
-
-        // Clear dual-tone chime (F#5 to A#5)
-        osc.type = "sine";
-        osc.frequency.setValueAtTime(740, now);
-        osc.frequency.setValueAtTime(932, now + 0.07);
-
-        gain.gain.setValueAtTime(0.001, now);
-        gain.gain.linearRampToValueAtTime(0.18, now + 0.02);
-        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
-
-        osc.connect(gain);
-        gain.connect(audioContext.destination);
-        osc.start(now);
-        osc.stop(now + 0.36);
-      } catch (e) {
-        // AudioContext blocked before first user gesture
-      }
-    }
-
-    /* Compute exact mathematical results for active scenario */
-    function computeScenario(scenId) {
-      const scen = SCENARIOS[scenId];
-      const out = [];
-      let prevEma = 0.0;
-      let consec = 0;
-      let alertFired = false;
-      let alertIdx = null;
-
-      scen.windows.forEach((w, i) => {
-        const contribA = CAPS.acoustic * w.acoustic;
-        const contribS = CAPS.speaker * w.speaker;
-        const contribC = CAPS.context * w.context;
-
-        // noisy-OR: fused = 1 - Π(1 - cap_i * score_i)
-        const fused = 1.0 - ((1.0 - contribA) * (1.0 - contribS) * (1.0 - contribC));
-
-        // Asymmetric EMA
-        const alpha = (fused >= prevEma) ? RISK.alphaAttack : RISK.alphaRelease;
-        const ema = (i === 0) ? (alpha * fused) : (alpha * fused + (1.0 - alpha) * prevEma);
-        prevEma = ema;
-
-        // Alert condition: Scenario 2 alert at window 1 (per specification); Scenario 3 at window 2
-        if (scenId === 2 && i === 0) {
-          consec = 2;
-          alertFired = true;
-          if (alertIdx === null) alertIdx = i;
-        } else {
-          if (ema >= RISK.threshold) {
-            consec++;
-            if (consec >= RISK.consecutiveRequired) {
-              alertFired = true;
-              if (alertIdx === null) alertIdx = i;
-            }
-          } else {
-            consec = 0;
-          }
-        }
-
-        let level = "LOW";
-        if (ema >= 0.60) level = "CRITICAL";
-        else if (ema >= 0.40) level = "HIGH";
-        else if (ema >= 0.20) level = "MEDIUM";
-
-        // Hash chain block
-        const prevHash = (i === 0) ? "00000000" : out[i - 1].auditBlock.hash;
-        const currHash = ("00000000" + Math.abs((ema * 100000 + i * 31 + (alertFired ? 9999 : 0)) | 0).toString(16)).slice(-8);
-
-        out.push({
-          raw: w,
-          contribA,
-          contribS,
-          contribC,
-          fused,
-          ema,
-          consec,
-          alertFired,
-          level,
-          auditBlock: {
-            tag: `BLOCK #${i + 1}`,
-            prevHash,
-            hash: currHash
-          }
-        });
-      });
-
-      return { results: out, alertIdx };
-    }
-
-    /* ==========================================================================
-       INITIALIZATION
-       ========================================================================== */
-    function init() {
-      initTheme();
-      renderNeuralNet();
-      renderEmbeddingStrips();
-      recalculate();
-      renderScrubTrack();
-      updateStaticDiagram();
-      requestAnimationFrame(mainLoop);
-    }
-
-    /* 4-6-6-2 Miniature Neural Network Cluster */
-    function renderNeuralNet() {
-      const wrap = document.getElementById("nn-nodes-cluster");
-      wrap.innerHTML = "";
-      const layers = [4, 6, 6, 2];
-      const spacingX = 42;
-      const h = 46;
-      const coords = [];
-
-      layers.forEach((cnt, lIdx) => {
-        const x = lIdx * spacingX + 8;
-        const dy = h / (cnt + 1);
-        const lCoords = [];
-        for (let i = 0; i < cnt; i++) {
-          lCoords.push({ x, y: (i + 1) * dy, id: `nn-${lIdx}-${i}` });
-        }
-        coords.push(lCoords);
-      });
-
-      // Lines
-      for (let l = 0; l < coords.length - 1; l++) {
-        coords[l].forEach(from => {
-          coords[l + 1].forEach(to => {
-            const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-            line.setAttribute("x1", from.x);
-            line.setAttribute("y1", from.y);
-            line.setAttribute("x2", to.x);
-            line.setAttribute("y2", to.y);
-            line.setAttribute("stroke", "var(--border-rule)");
-            line.setAttribute("stroke-width", "0.9");
-            wrap.appendChild(line);
-          });
-        });
-      }
-
-      // Nodes
-      coords.forEach(l => {
-        l.forEach(n => {
-          const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-          c.setAttribute("cx", n.x);
-          c.setAttribute("cy", n.y);
-          c.setAttribute("r", "2.6");
-          c.setAttribute("fill", "var(--text-ink)");
-          c.setAttribute("id", n.id);
-          c.setAttribute("class", "nn-node");
-          wrap.appendChild(c);
-        });
-      });
-    }
-
-    /* Two 256-dim embedding strips */
-    function renderEmbeddingStrips() {
-      const s1 = document.getElementById("strip-enrolled");
-      const s2 = document.getElementById("strip-live");
-      s1.innerHTML = "";
-      s2.innerHTML = "";
-      const bars = 26;
-      for (let i = 0; i < bars; i++) {
-        const val = Math.abs(Math.sin((i + 2) * 1.6));
-        const r1 = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-        r1.setAttribute("x", i * 6);
-        r1.setAttribute("y", 0);
-        r1.setAttribute("width", 4);
-        r1.setAttribute("height", 8);
-        r1.setAttribute("fill", "var(--text-ink)");
-        r1.setAttribute("opacity", (0.2 + val * 0.8).toFixed(2));
-        s1.appendChild(r1);
-
-        const r2 = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-        r2.setAttribute("x", i * 6);
-        r2.setAttribute("y", 0);
-        r2.setAttribute("width", 4);
-        r2.setAttribute("height", 8);
-        r2.setAttribute("fill", "var(--text-ink)");
-        r2.setAttribute("id", `live-bar-${i}`);
-        s2.appendChild(r2);
-      }
-    }
-
-    function updateLiveStrip(speakerScore) {
-      const bars = 26;
-      for (let i = 0; i < bars; i++) {
-        const bar = document.getElementById(`live-bar-${i}`);
-        if (!bar) continue;
-        if (speakerScore < 0.1) {
-          // Alignment (identical to enrolled)
-          const val = Math.abs(Math.sin((i + 2) * 1.6));
-          bar.setAttribute("opacity", (0.2 + val * 0.8).toFixed(2));
-          bar.setAttribute("fill", "var(--text-ink)");
-        } else {
-          // Impostor mismatch
-          const val = Math.abs(Math.cos((i + 7) * 2.1));
-          bar.setAttribute("opacity", (0.3 + val * 0.7).toFixed(2));
-          bar.setAttribute("fill", "var(--risk-alert)");
-        }
-      }
-    }
-
-    function recalculate() {
-      const res = computeScenario(currentScenarioId);
-      computedRuns = res.results;
-      scenarioAlertIdx = res.alertIdx;
-    }
-
-    function renderScrubTrack() {
-      const track = document.getElementById("scrub-track");
-      track.innerHTML = "";
-      const scen = SCENARIOS[currentScenarioId];
-
-      scen.windows.forEach((w, i) => {
-        const cell = document.createElement("div");
-        cell.className = "scrub-cell";
-        cell.id = `scrub-${i}`;
-        cell.textContent = `W#${w.window}`;
-        cell.onclick = () => jumpToWindow(i);
-
-        if (computedRuns[i] && computedRuns[i].alertFired) {
-          cell.classList.add("alert-point");
-        }
-        track.appendChild(cell);
-      });
-    }
-
-    /* ==========================================================================
-       DIAGRAM STATE SYNCHRONIZATION
-       ========================================================================== */
-    function updateStaticDiagram() {
-      if (!computedRuns || !computedRuns[currentWindowIdx]) return;
-      const data = computedRuns[currentWindowIdx];
-      const w = data.raw;
-
-      // Header description
-      document.getElementById("teaching-point").textContent = SCENARIOS[currentScenarioId].teachingPoint;
-
-      // Scrub track active class
-      document.querySelectorAll(".scrub-cell").forEach((c, idx) => {
-        c.classList.toggle("active", idx === currentWindowIdx);
-      });
-      document.getElementById("scrub-count").textContent =
-        `${w.window} / ${SCENARIOS[currentScenarioId].windows.length} · ${w.window * 5}s elapsed`;
-
-      // Window labels
-      document.getElementById("win-time-label").textContent = `W#${w.window} · 5s`;
-      document.getElementById("win-span-label").textContent = w.time;
-
-      // Signal 1: Acoustic
-      // Edge intensity: cap * score
-      setEdgeIntensity("edge-win-acoustic", "edge-acoustic-fus", data.contribA, CAPS.acoustic);
-
-      // Signal 2: Speaker
-      updateLiveStrip(w.speaker);
-      const speakerNote = document.getElementById("speaker-clone-note");
-      const edgeWinSpk = document.getElementById("edge-win-speaker");
-      const edgeSpkFus = document.getElementById("edge-speaker-fus");
-
-      if (currentScenarioId === 3) {
-        // Known limitation: Clone passes voiceprint
-        speakerNote.style.display = "block";
-        edgeWinSpk.className.baseVal = "svg-edge dimmed-dashed";
-        edgeSpkFus.className.baseVal = "svg-edge dimmed-dashed";
-      } else {
-        speakerNote.style.display = "none";
-        setEdgeIntensity("edge-win-speaker", "edge-speaker-fus", data.contribS, CAPS.speaker);
-      }
-
-      // Signal 3: Context
-      setEdgeIntensity("edge-win-context", "edge-context-fus", data.contribC, CAPS.context);
-      [1, 2, 3].forEach(fIdx => {
-        const flag = document.getElementById(`flag-${fIdx}`);
-        const active = w.flags[fIdx - 1];
-        if (flag) {
-          const r = flag.querySelector("rect");
-          const t = flag.querySelector("text");
-          if (active) {
-            r.setAttribute("fill", "var(--text-ink)");
-            t.setAttribute("fill", "var(--text-ink)");
-            t.setAttribute("font-weight", "bold");
-          } else {
-            r.setAttribute("fill", "var(--bg-page)");
-            t.setAttribute("fill", "var(--text-secondary)");
-            t.setAttribute("font-weight", "normal");
-          }
-        }
-      });
-
-      // Fusion
-      document.getElementById("fused-score-val").textContent = data.fused.toFixed(3);
-      setEdgeIntensity("edge-fus-risk", "edge-risk-verdict", data.ema, 1.0);
-
-      // Risk Engine Chart
-      renderRiskChart();
-      const emaDisp = document.getElementById("risk-ema-display");
-      if (emaDisp) emaDisp.textContent = data.ema.toFixed(3);
-
-      // Verdict Level Box
-      const vBox = document.getElementById("verdict-box");
-      const vText = document.getElementById("verdict-text");
-      vText.textContent = `${data.level} (${data.ema.toFixed(2)})`;
-
-      if (data.alertFired) {
-        vBox.setAttribute("fill", "var(--risk-alert-bg)");
-        vBox.setAttribute("stroke", "var(--risk-alert-border)");
-        vText.setAttribute("fill", "var(--risk-alert)");
-        vBox.setAttribute("stroke-width", "2");
-
-        // Trigger Alert Beep once on transition into alert state
-        if (!alertSoundPlayed) {
-          playAlertBeep();
-          alertSoundPlayed = true;
-        }
-      } else {
-        vBox.setAttribute("fill", "var(--risk-calm-bg)");
-        vBox.setAttribute("stroke", "var(--risk-calm-border)");
-        vText.setAttribute("fill", "var(--risk-calm)");
-        vBox.setAttribute("stroke-width", "1");
-        alertSoundPlayed = false;
-      }
-
-      // Audit Block
-      const b = data.auditBlock;
-      document.getElementById("audit-tag-text").textContent = b.tag;
-      document.getElementById("audit-hash-prev").textContent = `p: ${b.prevHash}`;
-      document.getElementById("audit-hash-curr").textContent = `h: ${b.hash}`;
-
-      // Refresh open popover if visible
-      if (activePopoverStage) {
-        updatePopoverContent(activePopoverStage);
-      }
-    }
-
-    function setEdgeIntensity(edgeInId, edgeOutId, contrib, maxCap) {
-      const eIn = document.getElementById(edgeInId);
-      const eOut = document.getElementById(edgeOutId);
-      const ratio = contrib / maxCap;
-      const isHot = ratio > 0.6;
-
-      [eIn, eOut].forEach(e => {
-        if (!e) return;
-        if (isHot) {
-          e.className.baseVal = "svg-edge hot";
-        } else if (ratio < 0.05) {
-          e.className.baseVal = "svg-edge";
-          e.setAttribute("stroke-width", "1.5");
-        } else {
-          e.className.baseVal = "svg-edge";
-          e.setAttribute("stroke-width", (1.5 + ratio * 2).toFixed(1));
-        }
-      });
-    }
-
-    function renderRiskChart() {
-      const chartW = 152;
-      const chartH = 80;
-      const total = SCENARIOS[currentScenarioId].windows.length;
-      const points = [];
-
-      computedRuns.forEach((d, i) => {
-        const x = (i / (total - 1)) * (chartW - 14) + 7;
-        const y = chartH - (d.ema * chartH);
-        points.push(`${x.toFixed(1)},${y.toFixed(1)}`);
-      });
-
-      const line = document.getElementById("chart-ema-line");
-      if (line) line.setAttribute("d", `M ${points.join(" L ")}`);
-
-      const curPt = points[currentWindowIdx].split(",");
-      const dot = document.getElementById("chart-dot");
-      if (dot && curPt.length === 2) {
-        dot.setAttribute("cx", curPt[0]);
-        dot.setAttribute("cy", curPt[1]);
-        const isAlert = computedRuns[currentWindowIdx].alertFired;
-        dot.setAttribute("fill", isAlert ? "var(--risk-alert)" : "var(--text-ink)");
-      }
-    }
-
-    /* ==========================================================================
-       ANIMATION LOOP (Single requestAnimationFrame, weighted easing)
-       ========================================================================== */
-    function mainLoop(timestamp) {
-      if (!lastFrameTime) lastFrameTime = timestamp;
-      const delta = timestamp - lastFrameTime;
-      lastFrameTime = timestamp;
-
-      // Animate waveform
-      const wave = document.getElementById("waveform-path");
-      if (wave) {
-        const t = timestamp * 0.004 * timeScale;
-        const y1 = (27 + Math.sin(t) * 10).toFixed(1);
-        const y2 = (27 + Math.cos(t * 1.3) * 12).toFixed(1);
-        wave.setAttribute("d", `M 0 27 Q 20 ${y1}, 45 27 T 75 ${y2} T 92 27`);
-      }
-
-      // Animate neural network node activations (staggered)
-      const acousticVal = computedRuns[currentWindowIdx]?.raw.acoustic || 0;
-      const nodes = document.querySelectorAll(".nn-node");
-      nodes.forEach((n, i) => {
-        const speed = (acousticVal > 0.5) ? 0.008 : 0.002;
-        const pulse = 0.3 + Math.abs(Math.sin(timestamp * speed + i * 0.5)) * 0.7 * (acousticVal > 0.5 ? 1.0 : 0.2);
-        n.setAttribute("opacity", pulse.toFixed(2));
-      });
-
-      // Packet traversal across Window -> Signal branch
-      const packet = document.getElementById("packet-container");
-      if (isPlaying) {
-        windowProgress += (delta * timeScale) / BASE_WINDOW_MS;
-        if (packet) {
-          packet.setAttribute("opacity", "1");
-          // Eased translation
-          const easeX = 140 + cubicEase(windowProgress) * 75;
-          packet.setAttribute("transform", `translate(${easeX.toFixed(1)}, 228)`);
-        }
-
-        if (windowProgress >= 1.0) {
-          windowProgress = 0;
-          if (currentWindowIdx < SCENARIOS[currentScenarioId].windows.length - 1) {
-            currentWindowIdx++;
-            updateStaticDiagram();
-          } else {
-            isPlaying = false;
-            updatePlayBtn();
-          }
-        }
-      } else {
-        if (packet) packet.setAttribute("opacity", "0");
-      }
-
-      requestAnimationFrame(mainLoop);
-    }
-
-    function cubicEase(t) {
-      // Accelerate away, settle down: cubic-bezier(0.25, 0.1, 0.25, 1.0)
-      return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
-    }
-
-    /* ==========================================================================
-       USER CONTROLS
-       ========================================================================== */
-    function togglePlay() {
-      // AudioContext unlock on first user action
-      if (!audioContext) {
-        try { audioContext = new (window.AudioContext || window.webkitAudioContext)(); } catch(e){}
-      }
-      isPlaying = !isPlaying;
-      if (isPlaying && currentWindowIdx >= SCENARIOS[currentScenarioId].windows.length - 1) {
-        currentWindowIdx = 0;
-      }
-      updatePlayBtn();
-    }
-
-    function updatePlayBtn() {
-      document.getElementById("btn-play").textContent = isPlaying ? "Pause" : "Play";
-    }
-
-    function stepNext() {
-      isPlaying = false;
-      updatePlayBtn();
-      if (currentWindowIdx < SCENARIOS[currentScenarioId].windows.length - 1) {
-        currentWindowIdx++;
-        windowProgress = 0;
-        updateStaticDiagram();
-      }
-    }
-
-    function stepBack() {
-      isPlaying = false;
-      updatePlayBtn();
-      if (currentWindowIdx > 0) {
-        currentWindowIdx--;
-        windowProgress = 0;
-        updateStaticDiagram();
-      }
-    }
-
-    function jumpToWindow(idx) {
-      isPlaying = false;
-      updatePlayBtn();
-      currentWindowIdx = idx;
-      windowProgress = 0;
-      updateStaticDiagram();
-    }
-
-    function resetSim() {
-      currentWindowIdx = 0;
-      windowProgress = 0;
-      isPlaying = true;
-      updatePlayBtn();
-      updateStaticDiagram();
-    }
-
-    function setSpeed(sp) {
-      timeScale = sp;
-      document.querySelectorAll(".btn-speed").forEach(b => {
-        b.classList.toggle("active", parseFloat(b.textContent) === sp);
-      });
-    }
-
-    function switchScenario(scenNum) {
-      currentScenarioId = scenNum;
-      currentWindowIdx = 0;
-      windowProgress = 0;
-      alertSoundPlayed = false;
-
-      document.getElementById("btn-scen-1").classList.toggle("active", scenNum === 1);
-      document.getElementById("btn-scen-2").classList.toggle("active", scenNum === 2);
-      document.getElementById("btn-scen-3").classList.toggle("active", scenNum === 3);
-
-      recalculate();
-      renderScrubTrack();
-      updateStaticDiagram();
-    }
-
-    /* ==========================================================================
-       INFO POPOVER SYSTEM (Three Short Lines Only)
-       ========================================================================== */
-    const INFO_CONTENT = {
-      audio: {
-        title: "Audio Stream",
-        plain: "Direct live phone call audio arriving packet by packet.",
-        tech: "16kHz PCM mono stream via WebSocket endpoint.",
-        val: () => "Live ingest active"
-      },
-      window: {
-        title: "Windowing",
-        plain: "Call is sliced into 5-second units to evaluate fraud while audio plays.",
-        tech: "80,000 float32 samples per unit buffer.",
-        val: () => `Window #${computedRuns[currentWindowIdx].raw.window} (${computedRuns[currentWindowIdx].raw.time})`
-      },
-      acoustic: {
-        title: "Acoustic Stage",
-        plain: "Listens for unnatural synthesizer glitches in the raw audio waveform.",
-        tech: "wav2vec2 transformer classifier fine-tuned on ASVspoof.",
-        val: () => `Spoof probability: ${computedRuns[currentWindowIdx].raw.acoustic.toFixed(3)} (cap 0.90)`
-      },
-      speaker: {
-        title: "Speaker Stage",
-        plain: "We compare the caller's voice to a recording of the real person, the way a fingerprint is compared to one on file.",
-        tech: "256-dim Resemblyzer d-vector, cosine similarity vs enrolled reference.",
-        val: () => currentScenarioId === 3
-          ? "Voice mismatch: 0.00 (Clone passes check)"
-          : `Voice mismatch: ${computedRuns[currentWindowIdx].raw.speaker.toFixed(2)}`
-      },
-      context: {
-        title: "Context Stage",
-        plain: "Checks if the caller is unexpected, calling late, or asking for money or codes.",
-        tech: "Rule triggers over caller metadata & live transcript keywords.",
-        val: () => `Context score: ${computedRuns[currentWindowIdx].raw.context.toFixed(2)} (cap 0.30)`
-      },
-      fusion: {
-        title: "Fusion Layer",
-        plain: "Combines the three checks so any one strong alarm is heard and cannot be cancelled out by zeros on others.",
-        tech: "Noisy-OR formula: fused = 1 − ∏(1 − capᵢ × scoreᵢ).",
-        val: () => `Fused risk score: ${computedRuns[currentWindowIdx].fused.toFixed(3)}`
-      },
-      risk: {
-        title: "Risk Engine",
-        plain: "Smooths the score over time: fast to raise the alarm, slow to let it drop.",
-        tech: "Asymmetric EMA (attack α=0.60, release α=0.20). Requires 2 consecutive windows > 0.40.",
-        val: () => `Running EMA: ${computedRuns[currentWindowIdx].ema.toFixed(3)}`
-      },
-      verdict: {
-        title: "Verdict & Audit",
-        plain: "Raises the alert and writes a tamper-evident record sealed with the previous block's hash.",
-        tech: "Cryptographic hash chain seals record order.",
-        val: () => `Level: ${computedRuns[currentWindowIdx].level} · Hash: ${computedRuns[currentWindowIdx].auditBlock.hash}`
-      }
-    };
-
-    let activePopoverStage = null;
-
-    const STAGE_ANCHORS = {
-      audio:    { side: "right",  align: "top",  offset: 14 },
-      window:   { side: "bottom", align: "left", offset: 12 },
-      acoustic: { side: "right",  align: "top",  offset: 16 },
-      speaker:  { side: "right",  align: "top",  offset: 16 },
-      context:  { side: "right",  align: "top",  offset: 16 },
-      fusion:   { side: "bottom", align: "center", offset: 12 },
-      risk:     { side: "left",   align: "top",  offset: 16 },
-      verdict:  { side: "left",   align: "top",  offset: 16 }
-    };
-
-    function openInfo(e, stageKey) {
-      e.stopPropagation();
-      activePopoverStage = stageKey;
-      const popover = document.getElementById("popover");
-      updatePopoverContent(stageKey);
-
-      const wrapRect = document.querySelector(".svg-wrap").getBoundingClientRect();
-      const stageEl = document.getElementById(`stage-${stageKey}`);
-      const anchor = STAGE_ANCHORS[stageKey] || { side: "right", align: "top", offset: 14 };
-
-      let x = 0;
-      let y = 0;
-      const popW = 295;
-      const popH = 145;
-
-      if (stageEl) {
-        const sRect = stageEl.getBoundingClientRect();
-        const sLeft = sRect.left - wrapRect.left;
-        const sTop = sRect.top - wrapRect.top;
-
-        if (anchor.side === "right") {
-          x = sLeft + sRect.width + anchor.offset;
-          y = sTop;
-        } else if (anchor.side === "left") {
-          x = sLeft - popW - anchor.offset;
-          y = sTop;
-        } else if (anchor.side === "bottom") {
-          x = sLeft + (sRect.width / 2) - (popW / 2);
-          y = sTop + sRect.height + anchor.offset;
-        }
-      } else {
-        x = e.clientX - wrapRect.left + 15;
-        y = e.clientY - wrapRect.top - 20;
-      }
-
-      // Strict containment within wrap container
-      if (x + popW > wrapRect.width - 10) x = wrapRect.width - popW - 12;
-      if (x < 10) x = 10;
-      if (y + popH > wrapRect.height - 10) y = wrapRect.height - popH - 12;
-      if (y < 10) y = 10;
-
-      popover.style.left = `${Math.round(x)}px`;
-      popover.style.top = `${Math.round(y)}px`;
-      popover.classList.add("visible");
-    }
-
-    function updatePopoverContent(stageKey) {
-      const data = INFO_CONTENT[stageKey];
-      if (!data) return;
-      document.getElementById("pop-title").textContent = data.title;
-      document.getElementById("pop-plain").textContent = data.plain;
-      document.getElementById("pop-tech").textContent = data.tech;
-      document.getElementById("pop-val").textContent = data.val();
-    }
-
-    function closePopover() {
-      document.getElementById("popover").classList.remove("visible");
-      activePopoverStage = null;
-    }
-
-    function handleCanvasClick(e) {
-      if (!e.target.closest("#popover") && !e.target.closest(".info-btn-trigger")) {
-        closePopover();
-      }
-    }
-
-    /* ==========================================================================
-       THEME & KEYBOARD SHORTCUTS
-       ========================================================================== */
-    function initTheme() {
-      let saved = null;
-      try { saved = localStorage.getItem("sih26104_theme"); } catch(e) {}
-      if (saved) {
-        document.documentElement.setAttribute("data-theme", saved);
-      } else if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
-        document.documentElement.setAttribute("data-theme", "dark");
-      } else {
-        document.documentElement.setAttribute("data-theme", "light");
-      }
-      updateThemeLabel();
-    }
-
-    function toggleTheme() {
-      const curr = document.documentElement.getAttribute("data-theme") || "light";
-      const next = (curr === "dark") ? "light" : "dark";
-      document.documentElement.setAttribute("data-theme", next);
-      try { localStorage.setItem("sih26104_theme", next); } catch(e) {}
-      updateThemeLabel();
-    }
-
-    function updateThemeLabel() {
-      const isDark = document.documentElement.getAttribute("data-theme") === "dark";
-      const btn = document.getElementById("btn-theme");
-      if (btn) btn.textContent = isDark ? "Light Mode" : "Dark Mode";
-    }
-
-    window.addEventListener("keydown", (e) => {
-      if (e.code === "Space") {
-        e.preventDefault();
-        togglePlay();
-      } else if (e.code === "ArrowRight") {
-        e.preventDefault();
-        stepNext();
-      } else if (e.code === "ArrowLeft") {
-        e.preventDefault();
-        stepBack();
-      } else if (e.key === "1") {
-        switchScenario(1);
-      } else if (e.key === "2") {
-        switchScenario(2);
-      } else if (e.key === "3") {
-        switchScenario(3);
-      } else if (e.key === "t" || e.key === "T") {
-        toggleTheme();
-      } else if (e.key === "Escape") {
-        closePopover();
-      }
-    });
-
-    window.addEventListener("DOMContentLoaded", init);
-  </script>
+  </div>
+
+  <div class="card" style="margin-top:20px"><h3>Measured on a OnePlus CPH2707 (Android 16)</h3>
+    <div class="stat">
+      <div><b>959 ms</b><span>median per 5 s window, all three models (p95 1174 ms)</span></div>
+      <div><b>0.19×</b><span>real-time factor: about 5× faster than the call</span></div>
+      <div><b>5.3e-08</b><span>max difference phone vs Python reference scores</span></div>
+      <div><b>0 / 48</b><span>genuine ASVspoof clips flagged (AUC 0.825 per window)</span></div>
+      <div><b>0.89 vs 0.55</b><span>voiceprint similarity: same person vs different person (median)</span></div>
+      <div><b>+0.9 s</b><span>p95 cost of English (India) scam-phrase recognition</span></div>
+    </div>
+    <p style="color:var(--dim);font-size:12px;margin:10px 0 0">Sources: docs/phone/RESULTS.md and docs/phone/benchmarks/ in the project repository. Model components: acoustic 649 ms, speaker 291 ms, VAD 40 ms (medians).</p>
+  </div>
+
+  <div class="cols">
+    <div class="card"><h3>Known limits (we say them first)</h3>
+      <ul class="tight">
+        <li>Some modern commercial AI voices slip past the acoustic model (a commercial TTS sample scored 0.004). The voiceprint check still applies to Protect contacts.</li>
+        <li>One real-person phone recording was falsely flagged (0.995). Narrowband 8 kHz audio flagged 4 of 48 genuine clips. Retraining on phone-codec and Indian speech is first on the roadmap.</li>
+        <li>Hindi speech recognition costs 3 s per window on this phone, over our real-time budget; production would use a lighter keyword-spotting model.</li>
+        <li>Live capture needs the sideloaded build and speakerphone; store builds use the after-call scan.</li>
+      </ul>
+    </div>
+    <div class="card"><h3>Two editions, one engine</h3>
+      <ul class="tight">
+        <li><b>Phone edition (SwarKavach):</b> Android app, all models on-device, Hindi + English UI.</li>
+        <li><b>Enterprise edition:</b> FastAPI server + live dashboard for bank and government call centres, plugged into the existing recorded-call stream. Same fusion, same risk engine, 212 automated tests.</li>
+        <li>The phone port reproduces the Python reference exactly: 300/300 fusion, 60/60 risk-engine and 80/80 context golden test cases.</li>
+      </ul>
+    </div>
+  </div>
+</main>
+
+<footer class="wrap">
+  Keys: <kbd>Space</kbd> play/pause · <kbd>→</kbd>/<kbd>←</kbd> step · <kbd>1</kbd>–<kbd>7</kbd> scenarios · <kbd>R</kbd> restart · <kbd>V</kbd> simulation/architecture · <kbd>T</kbd> theme.
+  Scores come from the Python reference run on the same audio; "measured on phone" lines come from the app's demo mode on the test phone. Fully offline, no network calls.
+</footer>
+
+<script>
+(function(){
+"use strict";
+/* ---------- engine: mirrors src/fusion.py and src/risk_engine.py ---------- */
+var CAPS={a:0.90,s:0.90,c:0.30}, TH=0.40, ATTACK=0.60, RELEASE=0.20, SUSTAIN=2;
+function level(x){return x>=0.6?"CRITICAL":x>=0.4?"HIGH":x>=0.2?"MEDIUM":"LOW";}
+function fuse(a,s,c){var ca=CAPS.a*a,cs=CAPS.s*s,cc=CAPS.c*c;
+  var f=1-(1-ca)*(1-cs)*(1-cc);var dom=ca>=cs&&ca>=cc?"acoustic":cs>=cc?"speaker":"context";return {f:f,dom:dom};}
+function run(sc){var ema=0,init=false,streak=0,fired=null,peak=0,rows=[];
+  sc.a.forEach(function(a,i){var s=sc.s?sc.s[i]:0;var r=fuse(a,s==null?0:s,sc.c);
+    if(!init){ema=r.f;init=true}else{ema=(r.f>ema?ATTACK:RELEASE)*r.f+(1-(r.f>ema?ATTACK:RELEASE))*ema}
+    streak=r.f>=TH?streak+1:0;var alert=streak>=SUSTAIN&&ema>=TH;if(alert&&fired===null)fired=i;peak=Math.max(peak,ema);
+    rows.push({a:a,s:s,c:sc.c,f:r.f,dom:r.dom,ema:ema,lvl:level(ema),alert:alert,streak:streak});});
+  return {rows:rows,fired:fired,peak:peak};}
+
+/* ---------- scenarios: acoustic scores = Python reference per 5 s window (android assets/demo/scenarios.json) ---------- */
+var CTX_UNKNOWN=0.25;
+var SC=[
+ {key:"1",id:"genuine",label:"Genuine: Papa",caller:"Papa",num:"Saved contact",policy:"VERIFY",
+  a:[0.0042,0.0042,0.0041,0.0042],s:[0,0,0,0],c:0,
+  teach:"Papa is set to <b>Protect</b>, so every window is checked: is the voice synthetic, and is it really Papa? Both stay near zero. The system does not cry wolf on the real person.",
+  measured:"Measured on phone (demo mode): CLEAR, peak 0.0038, LOW, no alert."},
+ {key:"2",id:"impostor",label:"Impostor on Papa's number",caller:"Papa",num:"Saved contact",policy:"VERIFY",
+  a:[0.0041,0.0042,0.0042,0.0041],s:[1,1,1,1],c:0,
+  teach:"A real human pretending to be Papa (caller ID can be spoofed). The voice is human, so the deepfake check stays quiet, but the <b>voiceprint check</b> knows it is not Papa (mismatch 1.00). That one strong signal is enough on its own.",
+  measured:"Measured on phone (demo mode): SUSTAINED ALERT on the 2nd window (10 s of audio), peak 0.900, CRITICAL, dominant signal: speaker."},
+ {key:"3",id:"clone",label:"AI clone of Papa",caller:"Papa",num:"Saved contact",policy:"VERIFY",
+  a:[0.0043,0.996,0.9956,0.9959,0.984,0.0165],s:[0,0,0,0,0,0],c:0,
+  teach:"The headline case. The clone <b>passes the voiceprint check</b> (mismatch 0.00, it sounds like Papa). The deepfake model catches the synthesis (0.996). Because we combine with noisy-OR, not an average, the acoustic signal alone carries the risk to 0.90 and the alert fires after two clone windows. This is the real captured clone call kept in our test suite.",
+  measured:"Measured on phone (demo mode): SUSTAINED ALERT on the 3rd window (window 1 is near-silence, so after 10 s of clone audio), peak 0.869, CRITICAL, dominant signal: acoustic. Our old weighted-average design never alerted on this exact call."},
+ {key:"4",id:"scam",label:"Scam script, real voice",caller:"+91 98XXX XX123",num:"Unknown number",policy:"SCAN",
+  a:[0.0042,0.0042,0.0041,0.0042],s:null,c:0.85,
+  phrases:"otp, immediately, transfer",
+  teach:"Unknown caller, off-hours, first contact, and the words \"OTP\", \"immediately\", \"transfer\": context is maxed at 0.85. But context is capped at 0.30, so it raises the call to MEDIUM and <b>never accuses on its own</b>. Suspicious words are not proof of a cloned voice.",
+  measured:"Measured on phone (demo mode): CLEAR, peak 0.258, MEDIUM, dominant signal: context. No alert, by design."},
+ {key:"5",id:"ignore",label:"Trusted contact (Ignore)",caller:"Riya",num:"Saved contact",policy:"SKIP",
+  a:[],s:[],c:0,
+  teach:"The user decides who to check. Riya is set to <b>Ignore</b>, so nothing runs: no microphone, no models, no battery. Unknown numbers can never be set to Ignore.",
+  measured:"Policy engine unit tests cover every branch; unknown numbers can never resolve to Skip."},
+ {key:"6",id:"viraj",label:"Commercial AI voice (known miss)",caller:"+91 70XXX XX456",num:"Unknown number",policy:"SCAN",known:true,
+  a:[0.0044,0.0043],s:null,c:CTX_UNKNOWN,
+  teach:"An honest weakness. A modern commercial text-to-speech voice scores 0.004 on our acoustic model, so from an unknown number it stays LOW. We show it instead of hiding it: if this voice impersonated a <b>Protect</b> contact, the voiceprint check would still have to be fooled. Retraining on newer generators and Indian speech is first on our roadmap.",
+  measured:"Measured on phone (demo mode): CLEAR, peak 0.079, LOW. A known miss."},
+ {key:"7",id:"itw",label:"Internet deepfake, unknown number",caller:"+91 81XXX XX789",num:"Unknown number",policy:"SCAN",
+  a:[0.9962,0.9961,0.9962],s:null,c:CTX_UNKNOWN,
+  teach:"A real-world deepfake from the In-the-Wild dataset, calling from an unknown number. There is no voiceprint to compare, yet the acoustic check alone raises the alert after two windows.",
+  measured:"Measured on phone (demo mode): SUSTAINED ALERT on the 2nd window (10 s of audio), peak 0.904, CRITICAL, dominant signal: acoustic."}
+];
+
+/* ---------- state ---------- */
+var cur=SC[2], R=run(cur), step=0, playing=false, speed=1, timer=null, stageTimers=[], audioCtx=null, beeped=false;
+var chain=[]; // {prev, ts, payload, hash}
+function maxStep(){return cur.policy==="SKIP"?2:2+cur.a.length;} // 0 ring, 1 shield, 2..: windows, last: end
+function $(id){return document.getElementById(id);}
+
+/* ---------- SHA-256 (offline, no SubtleCrypto needed) ---------- */
+function sha256(ascii){function rr(v,a){return (v>>>a)|(v<<(32-a));}
+  var mp=Math.pow,mw=mp(2,32),res="",words=[],bl=ascii.length*8,hash=sha256.h=sha256.h||[],k=sha256.k=sha256.k||[],pl=k.length,ic={};
+  for(var c=2;pl<64;c++){if(!ic[c]){for(var i=0;i<313;i+=c)ic[i]=c;hash[pl]=(mp(c,.5)*mw)|0;k[pl++]=(mp(c,1/3)*mw)|0;}}
+  hash=hash.slice(0,8);ascii+="\x80";while(ascii.length%64-56)ascii+="\x00";
+  for(i=0;i<ascii.length;i++){var j=ascii.charCodeAt(i);words[i>>2]|=j<<((3-i)%4)*8;}
+  words[words.length]=((bl/mw)|0);words[words.length]=bl;
+  for(j=0;j<words.length;){var w=words.slice(j,j+=16),oh=hash;hash=hash.slice(0,8);
+    for(i=0;i<64;i++){var w15=w[i-15],w2=w[i-2],a=hash[0],e=hash[4];
+      var t1=hash[7]+(rr(e,6)^rr(e,11)^rr(e,25))+((e&hash[5])^((~e)&hash[6]))+k[i]+(w[i]=(i<16)?w[i]:(w[i-16]+(rr(w15,7)^rr(w15,18)^(w15>>>3))+w[i-7]+(rr(w2,17)^rr(w2,19)^(w2>>>10)))|0);
+      var t2=(rr(a,2)^rr(a,13)^rr(a,22))+((a&hash[1])^(a&hash[2])^(hash[1]&hash[2]));
+      hash=[(t1+t2)|0].concat(hash);hash[4]=(hash[4]+t1)|0;}
+    for(i=0;i<8;i++)hash[i]=(hash[i]+oh[i])|0;}
+  for(i=0;i<8;i++)for(j=3;j+1;j--){var b=(hash[i]>>(j*8))&255;res+=((b<16)?0:"")+b.toString(16);}return res;}
+function canon(rec){return JSON.stringify({payload:rec.payload,prev_hash:rec.prev,timestamp_ms:rec.ts});}
+function appendRecord(payload){var prev=chain.length?chain[chain.length-1].hash:"0".repeat(64);
+  var rec={prev:prev,ts:Date.now(),payload:payload};rec.hash=sha256(canon(rec));chain.push(rec);renderChain();}
+function verifyChain(){var prev="0".repeat(64);for(var i=0;i<chain.length;i++){var r=chain[i];
+  if(r.prev!==prev)return {ok:false,at:i,why:"link to previous record broken"};
+  if(sha256(canon(r))!==r.hash)return {ok:false,at:i,why:"record contents were edited"};prev=r.hash;}return {ok:true,n:chain.length};}
+
+/* ---------- rendering ---------- */
+function fmt(x,d){return x==null?"–":x.toFixed(d==null?3:d);}
+function renderScenBar(){var bar=$("scenBar");bar.innerHTML="";SC.forEach(function(s){var b=document.createElement("button");
+  b.innerHTML="<kbd>"+s.key+"</kbd>"+s.label;b.setAttribute("aria-pressed",s===cur);if(s.known)b.classList.add("known");
+  b.onclick=function(){select(s)};bar.appendChild(b);});}
+function select(s){cur=s;R=run(s);step=0;beeped=false;stop();renderScenBar();render();}
+
+function policyText(){return cur.policy==="SKIP"?"Skip":cur.policy==="VERIFY"?"Verify voice":"Scan";}
+function policyReason(){return cur.policy==="SKIP"?cur.caller+" is set to Ignore":cur.policy==="VERIFY"?cur.caller+" is set to Protect":"Not in your contacts: always checked";}
+
+function gaugeSvg(v,lvl){var col={LOW:"#5BD27E",MEDIUM:"#FFC94D",HIGH:"#FF8A50",CRITICAL:"#FF6B6B"}[lvl];
+  var ang=Math.PI*(1-v),x=100+80*Math.cos(ang),y=100-80*Math.sin(ang);var large=0;
+  return '<svg viewBox="0 0 200 110" aria-hidden="true"><path d="M20 100 A80 80 0 0 1 180 100" fill="none" stroke="#24323A" stroke-width="14" stroke-linecap="round"/>'+
+   (v>0.005?'<path d="M20 100 A80 80 0 '+large+' 1 '+x.toFixed(1)+' '+y.toFixed(1)+'" fill="none" stroke="'+col+'" stroke-width="14" stroke-linecap="round"/>':"")+
+   '<line x1="'+(100+70*Math.cos(Math.PI*0.6)).toFixed(1)+'" y1="'+(100-70*Math.sin(Math.PI*0.6)).toFixed(1)+'" x2="'+(100+94*Math.cos(Math.PI*0.6)).toFixed(1)+'" y2="'+(100-94*Math.sin(Math.PI*0.6)).toFixed(1)+'" stroke="#FF6B6B" stroke-width="2"/></svg>';}
+
+function renderPhone(){var ps=$("pScreen"),pa=$("pAlert"),ms=maxStep();pa.hidden=true;
+  var initials=cur.caller.charAt(0)==="+"?"?":cur.caller.charAt(0);
+  if(step===0){ps.innerHTML='<div class="caller"><div class="av ring">'+initials+'</div><div class="nm">'+cur.caller+'</div><div class="sub">'+cur.num+' · incoming call</div></div>'+
+    '<div style="text-align:center"><span class="pchip">'+policyText()+'</span></div>'+
+    (cur.policy==="SKIP"?'<div class="pcard"><b>Trusted contact</b>'+policyReason()+'. SwarKavach stays off.</div>':'<div class="pcard notif"><b>SwarKavach</b>'+policyReason()+'. Tap to shield this call (put it on speaker).</div>')+
+    '<div class="callbtns"><span style="background:#B3261E">End</span><span style="background:#1B6E35">Answer</span></div>';return;}
+  if(cur.policy==="SKIP"){ps.innerHTML='<div class="ptag">Call in progress · '+cur.caller+'</div><div class="pcard"><b>Not checked</b>'+cur.caller+' is a trusted contact (Ignore). No microphone, no models, no battery used.</div><div class="pcard"><b>Unknown numbers</b>are always checked. That rule can only be paused for 1 hour, never turned off.</div>';return;}
+  if(step===1){ps.innerHTML='<div class="ptag">Shielding this call</div><div class="pcard notif"><b>Listening on this phone</b>Keep the call on speaker so the caller\'s voice can be heard. Audio is analysed in memory and thrown away.</div><div class="pcard"><b>First result</b>appears after 5 seconds of audio.</div>';return;}
+  var wi=Math.min(step-2,R.rows.length-1),row=R.rows[wi],ended=step>=ms;
+  var phrases=cur.phrases&&wi>=0?'<div style="font-size:11.5px;color:var(--phone-muted)">Caller mentioned: '+cur.phrases+'</div>':'';
+  var sp=cur.s?('<span>'+fmt(row.s,2)+'</span><div class="bar"><i style="width:'+(row.s*100)+'%"></i></div>'):'<span class="na">not assessed</span><div class="bar"><i style="width:0"></i></div>';
+  ps.innerHTML='<div class="ptag">'+(ended?'Call ended · result':'Live call check · window '+(wi+1))+'</div>'+
+   '<div class="gauge">'+gaugeSvg(row.ema,row.lvl)+'<div class="gval"><div class="pct num">'+Math.round(row.ema*100)+'%</div><span class="lvl '+row.lvl+'">'+row.lvl+'</span></div></div>'+
+   '<div class="pcard sig"><span>Voice authenticity (fake)</span><span>'+fmt(row.a,3)+'</span><div class="bar"><i style="width:'+(row.a*100)+'%"></i></div>'+
+   '<span>Mismatch vs saved voice</span>'+sp+
+   '<span>Call context</span><span>'+fmt(row.c,2)+'</span><div class="bar"><i style="width:'+(row.c*100)+'%"></i></div></div>'+phrases+
+   (ended?'<div class="pcard"><b>'+(R.fired!==null?'Alert raised at window '+(R.fired+1):'No alert')+'</b>Peak risk '+fmt(R.peak,3)+' · '+level(R.peak)+'. '+(R.fired!==null?'Audit record sealed.':'')+'</div>':'<div style="font-size:11.5px;color:var(--phone-muted)">5 s of audio scored on the phone in about 1 s</div>');
+  if(R.fired!==null&&wi>=R.fired&&!ended){var dom=R.rows[R.fired].dom;var pct=Math.round(row.ema*100);
+    pa.hidden=false;pa.className="palert";
+    pa.innerHTML='<h4>'+(dom==="speaker"?'This voice doesn\'t match '+cur.caller+' ('+pct+'%)':'Likely AI-cloned voice ('+pct+'%)')+'</h4>'+
+     '<p><b>Do NOT share OTP / UPI PIN / money.</b></p><p>Hang up and call back on the number saved in your contacts.</p>'+
+     '<div class="pb">Report to 1930 (opens the dialer)</div><div class="pb">Report at cybercrime.gov.in</div><div class="pb">Report on Sanchar Saathi (Chakshu)</div><div class="pb" style="opacity:.75">I trust this caller (mark false alarm)</div>';}
+}
+
+function setStage(id,cls){var el=$(id);el.classList.remove("active","done","skip","hot");if(cls)cls.split(" ").forEach(function(c){if(c)el.classList.add(c)});}
+function clearStageTimers(){stageTimers.forEach(clearTimeout);stageTimers=[];}
+function renderPipe(animate){clearStageTimers();var ms=maxStep();var ids=["s1","s2","s3","c1","c2","c3","s5","s6","s7"];
+  ids.forEach(function(i){setStage(i,"")});["v1","v2","v3","v5","v6","v7","cv1","cv2","cv3"].forEach(function(i){$(i).innerHTML=i.indexOf("cv")===0?"–":"";});
+  $("v1").innerHTML=policyText()+"<small>"+policyReason()+"</small>";
+  if(step===0){setStage("s1","active");return;}
+  setStage("s1","done");
+  if(cur.policy==="SKIP"){ids.slice(1).forEach(function(i){setStage(i,"skip")});$("v2").innerHTML="off<small>trusted contact</small>";return;}
+  $("v2").innerHTML="Live<small>accessibility · mic · speaker</small>";
+  if(step===1){setStage("s2","active");return;}
+  setStage("s2","done");
+  var wi=Math.min(step-2,R.rows.length-1),row=R.rows[wi],ended=step>=ms;
+  var seq=[["s3",function(){$("v3").innerHTML="window "+(wi+1)+"<small>VAD ~40 ms</small>";}],
+    ["c1",function(){$("cv1").innerHTML=fmt(row.a,3)+" <small>P(fake) · ~650 ms</small>";if(row.a>=0.5)setStage("c1","hot");}],
+    ["c2",function(){if(cur.s){$("cv2").innerHTML=fmt(row.s,2)+" <small>mismatch · ~290 ms</small>";if(row.s>=0.5)setStage("c2","hot");}else{$("cv2").innerHTML="<small>not run: no saved voice for an unknown number</small>";setStage("c2","skip");}}],
+    ["c3",function(){$("cv3").innerHTML=fmt(row.c,2)+" <small>"+(cur.phrases?"phrases: "+cur.phrases:(row.c>0?"unknown number":"saved contact"))+"</small>";}],
+    ["s5",function(){$("v5").innerHTML=fmt(row.f,3)+"<small>window score · dominant: "+row.dom+"</small>";if(row.f>=TH)setStage("s5","hot");}],
+    ["s6",function(){$("v6").innerHTML=fmt(row.ema,3)+' <span class="chip '+row.lvl+'">'+row.lvl+"</span><small>"+row.streak+" window(s) in a row ≥ 0.40</small>";if(row.alert)setStage("s6","hot");}],
+    ["s7",function(){if(R.fired!==null&&wi>=R.fired){$("v7").innerHTML=(wi===R.fired?"ALERT fired":"alert active")+"<small>record #"+chain.length+" sealed</small>";setStage("s7","hot");}else $("v7").innerHTML="no alert<small>evidence must persist 2 windows</small>";}]];
+  var gap=animate&&!ended?Math.max(90,260/speed):0;
+  seq.forEach(function(p,k){var fn=function(){if(k>0){var prev=seq[k-1][0];var pe=$(prev);if(pe.classList.contains("active")){pe.classList.remove("active");pe.classList.add("done");}}
+      if(!$(p[0]).classList.contains("skip"))setStage(p[0],"active");p[1]();
+      if(k===seq.length-1){var last=$(p[0]);if(last.classList.contains("active")){last.classList.remove("active");last.classList.add("done");}}};
+    if(gap)stageTimers.push(setTimeout(fn,gap*k));else fn();});
+  if(ended){ids.forEach(function(i){var e=$(i);if(e.classList.contains("active")){e.classList.remove("active");e.classList.add("done");}});}
+}
+
+function renderTimeline(){var b=$("tlBody");if(cur.policy==="SKIP"){b.innerHTML='<tr><td colspan="10" style="color:var(--muted)">No windows: this call is not checked.</td></tr>';return;}
+  var wiNow=step-2,html="";R.rows.forEach(function(r,i){var cls=i>wiNow?"future":(i===wiNow&&step<maxStep()?"cur":"");if(r.alert&&i<=wiNow)cls+=" alert";
+    var show=i<=wiNow;html+='<tr class="'+cls+'"><td class="num">'+(i+1)+'</td><td class="num">'+(i*5)+'–'+(i*5+5)+' s</td>'+
+     '<td class="num">'+(show?fmt(r.a,3):"")+'</td><td class="num">'+(show?(cur.s?fmt(r.s,2):"n/a"):"")+'</td><td class="num">'+(show?fmt(r.c,2):"")+'</td>'+
+     '<td class="num">'+(show?fmt(r.f,3):"")+'</td><td class="barcell">'+(show?'<div class="mini"><i style="width:'+(r.f*100)+'%"></i><span class="thr"></span></div>':"")+'</td>'+
+     '<td class="num">'+(show?fmt(r.ema,3):"")+'</td><td>'+(show?'<span class="chip '+r.lvl+'">'+r.lvl+'</span>':"")+'</td><td>'+(show&&r.alert?'<b style="color:var(--crit)">ALERT</b>':(show?"–":""))+'</td></tr>';});
+  b.innerHTML=html;}
+
+function renderTeach(){$("teach").innerHTML='<p>'+cur.teach+'</p><p class="measured">'+cur.measured+'</p>'+
+  (cur.known?'<p class="limit">Shown on purpose: judges should see where the model fails, not only where it works.</p>':'');}
+
+function stepLabel(){var ms=maxStep();var t;
+  if(step===0)t="Call arriving: the policy engine decides whether to check it.";
+  else if(cur.policy==="SKIP")t="Trusted contact: nothing runs.";
+  else if(step===1)t="Answered on speaker: capture starts, all on the phone.";
+  else if(step>=ms)t="Call ended: verdict "+(R.fired!==null?"ALERT at window "+(R.fired+1):"no alert")+", peak "+fmt(R.peak,3)+".";
+  else t="Window "+(step-1)+" of "+R.rows.length+": "+((step-2)*5)+"–"+((step-1)*5)+" s of audio, scored in about 1 s.";
+  $("stepLabel").textContent=t;}
+
+function renderChain(){var c=$("chain");var html='<div class="blk"><b>Genesis</b><code>0000…0000</code></div>';
+  chain.forEach(function(r,i){html+='<div class="blk'+(r.bad?" bad":"")+'"><b>Record #'+i+' · '+r.payload.scenario+' · peak '+r.payload.peak+'</b><code>prev '+r.prev.slice(0,16)+'…</code><code>hash '+r.hash.slice(0,16)+'…</code></div>';});
+  if(!chain.length)html+='<div style="color:var(--muted);font-size:13px">Records appear the moment an alert fires.</div>';c.innerHTML=html;}
+
+function render(animate){if(step>maxStep())step=maxStep();renderPhone();renderPipe(animate);renderTimeline();renderTeach();stepLabel();
+  if(cur.policy!=="SKIP"&&R.fired!==null&&step-2===R.fired&&!beeped){beeped=true;beep();
+    appendRecord({scenario:cur.id,number_hash:sha256("+91-demo-"+cur.id).slice(0,16),peak:R.peak.toFixed(3),dominant:R.rows[R.fired].dom,window:R.fired+1});}
+  $("btnPlay").textContent=playing?"❚❚ Pause":"▶ Play";}
+
+/* ---------- playback ---------- */
+function delayFor(s){if(s===0)return 1800;if(s===1)return 1300;return 2300;}
+function tick(){if(step>=maxStep()){stop();return;}step++;render(true);if(step>=maxStep()){stop();return;}timer=setTimeout(tick,delayFor(step)/speed);}
+function play(){if(step>=maxStep()){step=0;beeped=false;}playing=true;render(false);timer=setTimeout(tick,delayFor(step)/speed);}
+function stop(){playing=false;clearTimeout(timer);$("btnPlay").textContent="▶ Play";}
+function next(){stop();if(step<maxStep()){step++;render(true);}}
+function back(){stop();if(step>0){step--;render(false);}}
+function reset(){stop();step=0;beeped=false;render(false);}
+
+function beep(){try{audioCtx=audioCtx||new (window.AudioContext||window.webkitAudioContext)();if(audioCtx.state==="suspended")audioCtx.resume();
+  var t=audioCtx.currentTime;[0,0.18,0.36].forEach(function(d){var o=audioCtx.createOscillator(),g=audioCtx.createGain();o.frequency.value=1175;o.type="sine";
+  g.gain.setValueAtTime(0.0001,t+d);g.gain.exponentialRampToValueAtTime(0.18,t+d+0.02);g.gain.exponentialRampToValueAtTime(0.0001,t+d+0.14);o.connect(g);g.connect(audioCtx.destination);o.start(t+d);o.stop(t+d+0.16);});}catch(e){}}
+
+/* ---------- wiring ---------- */
+$("btnPlay").onclick=function(){playing?stop():play()};$("btnNext").onclick=next;$("btnBack").onclick=back;$("btnReset").onclick=reset;
+document.querySelectorAll(".speed button").forEach(function(b){b.onclick=function(){speed=parseFloat(b.dataset.speed);
+  document.querySelectorAll(".speed button").forEach(function(x){x.setAttribute("aria-pressed",x===b)});}});
+$("btnVerify").onclick=function(){var v=verifyChain();chain.forEach(function(r){r.bad=false});
+  if(v.ok)$("verifyOut").innerHTML='<span class="ok">VALID</span> · '+v.n+' record(s)';else{chain[v.at].bad=true;$("verifyOut").innerHTML='<span class="bad-t">BROKEN at record #'+v.at+'</span> · '+v.why;}renderChain();};
+$("btnTamper").onclick=function(){if(!chain.length){$("verifyOut").textContent="Run an alert scenario first (e.g. key 3).";return;}
+  chain[0].payload=Object.assign({},chain[0].payload,{peak:"0.010"});$("verifyOut").textContent="Record #0 edited: peak changed to 0.010. Now verify.";renderChain();};
+function setView(arch){$("viewSim").hidden=arch;$("viewArch").hidden=!arch;$("tabSim").setAttribute("aria-pressed",!arch);$("tabArch").setAttribute("aria-pressed",arch);if(arch)stop();}
+$("tabSim").onclick=function(){setView(false)};$("tabArch").onclick=function(){setView(true)};
+function toggleTheme(){var r=document.documentElement;r.setAttribute("data-theme",r.getAttribute("data-theme")==="dark"?"light":"dark");}
+$("btnTheme").onclick=toggleTheme;
+document.addEventListener("keydown",function(e){if(e.target.tagName==="INPUT")return;var k=e.key;
+  if(k===" "){e.preventDefault();playing?stop():play();}
+  else if(k==="ArrowRight"){e.preventDefault();next();}
+  else if(k==="ArrowLeft"){e.preventDefault();back();}
+  else if(k==="r"||k==="R")reset();
+  else if(k==="t"||k==="T")toggleTheme();
+  else if(k==="v"||k==="V")setView(!$("viewArch").hidden?false:true);
+  else{var s=SC.filter(function(x){return x.key===k})[0];if(s){setView(false);select(s);}}});
+setInterval(function(){var d=new Date();$("pClock").textContent=String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0");},10000);
+
+renderScenBar();renderChain();render(false);
+})();
+</script>
 </body>
 </html>
