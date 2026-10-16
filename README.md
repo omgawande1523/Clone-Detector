@@ -2,7 +2,7 @@
 
 A self-contained, judge-facing simulation of **SwarKavach**, our Android app that checks a phone call for an AI-cloned or impersonated voice **entirely on the phone**. Smart India Hackathon 2026, problem statement SIH26104 (AICTE Cyber Security Cell).
 
-The page walks a call through the real architecture, window by window: policy decision, capture, cleaning, the three checks, noisy-OR fusion, the risk engine, the alert and the tamper-evident log. The scores are the Python reference scores for the same audio the app's demo mode plays, and each scenario quotes the result measured on the test phone.
+One screen: the phone on the left, the on-device workflow on the right (Policy → Listen → three checks → Fusion → Risk → Verdict). Edges light up as each 5-second window flows through, and turn red when a check fires. The scores are the Python reference scores for the same audio the app's demo mode plays.
 
 ---
 
@@ -17,10 +17,9 @@ The page walks a call through the real architecture, window by window: policy de
 | Key | Action |
 | :-- | :-- |
 | `Space` | Play / pause |
-| `→` / `←` | Step forward / back (ring → answer → each 5 s window → call ended) |
+| `→` / `←` | Step forward / back (ring → each 5 s window → call ended) |
 | `1`–`7` | Pick a scenario |
 | `R` | Restart the scenario |
-| `V` | Switch between **Simulation** and **Architecture** views |
 | `T` | Light / dark theme |
 
 ## 3. Scenarios
@@ -43,7 +42,7 @@ The page walks a call through the real architecture, window by window: policy de
 4. **Three checks:** wav2vec2 deepfake model (ONNX) · WeSpeaker voiceprint (256 numbers) · call context (number rules + offline English-India scam-phrase recognition with Vosk).
 5. **Fusion:** noisy-OR over capped evidence, `fused = 1 − (1 − 0.9·a)(1 − 0.9·s)(1 − 0.3·c)`. Acoustic alone or speaker alone can alert; context alone never can.
 6. **Risk engine:** asymmetric EMA (attack 0.60, release 0.20); an alert needs two windows in a row ≥ 0.40.
-7. **Act:** full-screen warning ("Do NOT share OTP / UPI PIN / money"), report to 1930 / cybercrime.gov.in / Sanchar Saathi (Chakshu), and a SHA-256 hash-chained audit record. The page lets you verify the chain and tamper with a record to watch verification fail.
+7. **Act:** full-screen warning ("Do NOT share OTP / UPI PIN / money"), report to 1930 / cybercrime.gov.in / Sanchar Saathi (Chakshu), and a SHA-256 hash-chained audit record.
 
 Audio never leaves the phone. Windows are scored in memory and discarded; only scores, reasons and a hashed number are stored. Learning is opt-in: voiceprints of *Protect* contacts are built from the user's own past call recordings.
 
@@ -57,7 +56,7 @@ From the phone project's `docs/phone/RESULTS.md` (OnePlus CPH2707, Android 16):
 - Voiceprint similarity: same person median 0.89, different person 0.55.
 - English (India) scam-phrase recognition adds about 0.9 s at p95; Hindi does not fit the real-time budget on this phone yet.
 
-Known limits are shown in the Architecture view: some commercial AI voices slip past the acoustic model, one real-person phone recording was falsely flagged, and narrowband 8 kHz audio flagged 4 of 48 genuine clips.
+Known limits: some commercial AI voices slip past the acoustic model, one real-person phone recording was falsely flagged, and narrowband 8 kHz audio flagged 4 of 48 genuine clips.
 
 ## 6. 60-second walk-through (scenario 3)
 

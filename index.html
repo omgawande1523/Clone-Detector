@@ -4,523 +4,290 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SwarKavach · On-device Voice-Clone Shield</title>
-<meta name="description" content="SIH26104 simulation: how the SwarKavach phone app checks a call for an AI-cloned voice, entirely on the phone.">
+<meta name="description" content="SIH26104 simulation: how the SwarKavach phone app checks a call for an AI-cloned voice, on the phone.">
 <style>
-/* Self-contained: no CDN, no web fonts, no network. Runs from a USB stick.
-   Palette follows the Android app (ui/theme/Theme.kt). */
+/* Single file, no CDN, no web fonts, no network. Palette from the Android app theme. */
 :root{
-  --bg:#F7FAFC; --surface:#FFFFFF; --surface2:#EEF3F6; --ink:#171C1F; --muted:#4F5A60; --dim:#6B757A; --line:#D6DEE3;
-  --accent:#00546B; --accent-soft:#D8F1FB; --on-accent:#FFFFFF;
-  --low:#1B6E35; --low-bg:#DDF2E4; --med:#8A5A00; --med-bg:#FFF0C7; --high:#C2410C; --high-bg:#FFE6D8; --crit:#B3261E; --crit-bg:#FBE0DE;
-  --phone-bg:#0F1417; --phone-ink:#DEE3E6; --phone-muted:#9AA6AD; --phone-card:#182126; --phone-accent:#65D3FF;
+  --bg:#F7FAFC; --surface:#FFFFFF; --ink:#171C1F; --muted:#59646A; --dim:#8A949A; --line:#D3DCE1; --edge:#C4CED4;
+  --accent:#00546B; --accent-soft:#E0F3FA; --hot:#C62828; --hot-soft:#FDE8E7;
+  --low:#1B6E35; --med:#9A6400; --high:#C2410C; --crit:#B3261E;
   --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans","Helvetica Neue",Arial,sans-serif;
   --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
 }
 [data-theme="dark"]{
-  --bg:#0B1013; --surface:#121A1F; --surface2:#18232A; --ink:#DEE3E6; --muted:#A9B4BA; --dim:#7D888E; --line:#25323A;
-  --accent:#65D3FF; --accent-soft:#0F3442; --on-accent:#003546;
-  --low:#5BD27E; --low-bg:#123222; --med:#FFC94D; --med-bg:#3A2E0F; --high:#FF8A50; --high-bg:#3E2213; --crit:#FF6B6B; --crit-bg:#431A1D;
+  --bg:#0B1013; --surface:#121A1F; --ink:#DEE3E6; --muted:#9AA6AD; --dim:#66727A; --line:#24313A; --edge:#2C3A43;
+  --accent:#65D3FF; --accent-soft:#0E2E3A; --hot:#FF6B6B; --hot-soft:#3A1719;
+  --low:#5BD27E; --med:#FFC94D; --high:#FF8A50; --crit:#FF6B6B;
 }
 *{box-sizing:border-box}
-html,body{margin:0}
-body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased}
-button{font:inherit;color:inherit}
+html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:14px;display:flex;flex-direction:column;min-height:100vh;-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit;cursor:pointer}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-.num{font-variant-numeric:tabular-nums;font-family:var(--mono)}
-.wrap{max-width:1440px;margin:0 auto;padding:0 20px}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
 
-/* header */
-header.top{border-bottom:1px solid var(--line);background:var(--surface)}
-header .wrap{display:flex;align-items:center;gap:18px;padding-block:12px;flex-wrap:wrap}
+header{display:flex;align-items:center;gap:16px;padding:14px 28px;border-bottom:1px solid var(--line);flex-wrap:wrap}
 .brand{display:flex;align-items:center;gap:10px;margin-right:auto}
-.brand b{font-size:19px;letter-spacing:.01em}
-.brand small{display:block;color:var(--muted);font-size:12px;letter-spacing:.04em;text-transform:uppercase}
-.tabs{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
-.tabs button{border:0;background:transparent;padding:7px 14px;cursor:pointer;color:var(--muted)}
-.tabs button[aria-pressed="true"]{background:var(--accent);color:var(--on-accent)}
-.ghost{border:1px solid var(--line);background:transparent;border-radius:8px;padding:7px 12px;cursor:pointer;color:var(--muted)}
-.ghost:hover{color:var(--ink)}
+.brand b{font-size:18px}
+.brand span{color:var(--muted);font-size:12.5px;margin-left:4px}
+.scen{display:flex;gap:6px;flex-wrap:wrap}
+.scen button{border:1px solid var(--line);background:transparent;border-radius:999px;padding:5px 12px;color:var(--muted);font-size:13px}
+.scen button[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.icon{border:1px solid var(--line);background:transparent;border-radius:8px;padding:5px 10px;color:var(--muted)}
 
-/* scenario bar */
-.scen{display:flex;gap:8px;flex-wrap:wrap;padding-block:14px}
-.scen button{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:6px 12px;cursor:pointer;color:var(--muted);font-size:13.5px}
-.scen button kbd{font-family:var(--mono);font-size:11px;border:1px solid var(--line);border-radius:4px;padding:0 4px;margin-right:6px;color:var(--dim)}
-.scen button[aria-pressed="true"]{border-color:var(--accent);color:var(--ink);background:var(--accent-soft)}
-.scen button.known{border-style:dashed}
-
-/* main grid */
-.grid{display:grid;grid-template-columns:340px minmax(0,1fr);gap:20px;align-items:start}
-@media (max-width:980px){.grid{grid-template-columns:1fr}}
-.card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px;min-width:0}
-.card h3{margin:0 0 10px;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600}
+main{flex:1;display:grid;grid-template-columns:auto minmax(0,1fr);gap:28px;align-items:center;padding:18px 28px 6px}
+@media (max-width:1100px){main{grid-template-columns:1fr}}
 
 /* phone */
-.phone{width:320px;max-width:100%;margin:0 auto;background:#05080A;border-radius:38px;padding:12px;box-shadow:0 10px 40px rgba(0,0,0,.35)}
-.screen{background:var(--phone-bg);color:var(--phone-ink);border-radius:28px;height:600px;overflow:hidden;position:relative;display:flex;flex-direction:column}
-.notch{width:96px;height:22px;background:#05080A;border-radius:0 0 14px 14px;margin:0 auto;flex:none}
-.sbar{display:flex;justify-content:space-between;font-size:11px;color:var(--phone-muted);padding:2px 18px 6px;flex:none}
-.pscreen{flex:1;padding:6px 16px 16px;display:flex;flex-direction:column;gap:10px;overflow:hidden}
-.ptag{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--phone-accent)}
-.caller{text-align:center;margin-top:34px}
-.caller .av{width:76px;height:76px;border-radius:50%;margin:0 auto 12px;display:grid;place-items:center;font-size:30px;font-weight:700;background:#21323A;color:var(--phone-accent)}
-.caller .nm{font-size:24px;font-weight:600}
-.caller .sub{color:var(--phone-muted);font-size:13px}
-.pchip{display:inline-block;font-size:12px;font-weight:600;padding:3px 10px;border-radius:999px;background:#1E3A46;color:#BDE9FF}
-.pcard{background:var(--phone-card);border-radius:14px;padding:12px;font-size:13px}
-.pcard b{display:block;margin-bottom:2px}
-.pcard.notif{border-left:4px solid var(--phone-accent)}
+.phone{width:280px;background:#05080A;border-radius:36px;padding:10px;box-shadow:0 12px 40px rgba(0,0,0,.3);margin:0 auto}
+.screen{background:#0F1417;color:#DEE3E6;border-radius:27px;height:560px;overflow:hidden;position:relative;display:flex;flex-direction:column}
+.notch{width:90px;height:20px;background:#05080A;border-radius:0 0 13px 13px;margin:0 auto;flex:none}
+.ps{flex:1;padding:14px;display:flex;flex-direction:column;gap:10px}
+.tag{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#65D3FF;text-align:center}
+.av{width:72px;height:72px;border-radius:50%;margin:40px auto 10px;display:grid;place-items:center;font-size:28px;font-weight:700;background:#21323A;color:#65D3FF}
 .ring{animation:ring 1s ease-in-out infinite}
-@keyframes ring{0%,100%{transform:rotate(0)}20%{transform:rotate(-8deg)}40%{transform:rotate(8deg)}60%{transform:rotate(-4deg)}}
-.callbtns{display:flex;justify-content:space-around;margin-top:auto;padding-bottom:6px}
-.callbtns span{width:54px;height:54px;border-radius:50%;display:grid;place-items:center;font-size:12px;font-weight:700}
-.gauge{position:relative;height:120px;margin-top:2px}
+@keyframes ring{0%,100%{transform:rotate(0)}25%{transform:rotate(-9deg)}50%{transform:rotate(9deg)}}
+.nm{font-size:22px;font-weight:600;text-align:center}
+.sub{color:#9AA6AD;font-size:12.5px;text-align:center}
+.pill{align-self:center;font-size:12px;font-weight:600;padding:4px 12px;border-radius:999px;background:#1E3A46;color:#BDE9FF}
+.pcard{background:#182126;border-radius:14px;padding:11px 12px;font-size:12.5px;color:#C9D1D5}
+.pcard.n{border-left:3px solid #65D3FF}
+.btns{display:flex;justify-content:space-around;margin-top:auto}
+.btns i{width:52px;height:52px;border-radius:50%;display:block}
+.gauge{position:relative;height:118px}
 .gauge svg{width:100%;height:100%}
-.gval{position:absolute;left:0;right:0;bottom:4px;text-align:center}
-.gval .pct{font-size:30px;font-weight:700}
-.lvl{display:inline-block;font-size:11.5px;font-weight:700;letter-spacing:.04em;padding:2px 9px;border-radius:999px}
-.lvl.LOW{background:#1B6E35;color:#fff}.lvl.MEDIUM{background:#FFC94D;color:#2B1D00}.lvl.HIGH{background:#C2410C;color:#fff}.lvl.CRITICAL{background:#B3261E;color:#fff}
-.sig{display:grid;grid-template-columns:1fr auto;gap:2px 8px;font-size:12.5px}
-.sig .bar{grid-column:1/-1;height:6px;border-radius:3px;background:#24323A;overflow:hidden}
-.sig .bar i{display:block;height:100%;background:var(--phone-accent);transition:width .5s}
-.sig .na{color:var(--phone-muted);font-style:italic}
-.palert{position:absolute;inset:44px 10px 12px;background:#2A0D10;border:2px solid #FF6B6B;border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:10px;animation:pop .35s ease-out}
-@keyframes pop{from{transform:scale(.92);opacity:0}to{transform:none;opacity:1}}
-.palert h4{margin:0;font-size:19px;line-height:1.25;color:#FFB4AB}
-.palert p{margin:0;font-size:13.5px}
-.palert .pb{border:1px solid #6B2B2F;border-radius:10px;padding:8px 10px;font-size:12.5px;background:#3A1418}
-.pdemo{position:absolute;top:30px;right:14px;font-size:10px;font-weight:700;letter-spacing:.1em;color:#05080A;background:var(--phone-accent);border-radius:4px;padding:1px 6px}
+.gv{position:absolute;left:0;right:0;bottom:2px;text-align:center}
+.gv b{display:block;font-size:30px;font-family:var(--mono)}
+.lv{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.04em;padding:2px 9px;border-radius:999px}
+.lv.LOW{background:#1B6E35;color:#fff}.lv.MEDIUM{background:#FFC94D;color:#2B1D00}.lv.HIGH{background:#C2410C;color:#fff}.lv.CRITICAL{background:#B3261E;color:#fff}
+.bars{display:grid;gap:8px}
+.bar{display:grid;grid-template-columns:1fr auto;font-size:12px;gap:3px 6px;color:#C9D1D5}
+.bar i{grid-column:1/-1;height:5px;border-radius:3px;background:#24323A;overflow:hidden;display:block}
+.bar i u{display:block;height:100%;background:#65D3FF;transition:width .5s}
+.bar i u.h{background:#FF6B6B}
+.alertbox{position:absolute;inset:36px 10px 12px;background:#2A0D10;border:2px solid #FF6B6B;border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:10px;animation:pop .35s ease-out}
+@keyframes pop{from{transform:scale(.9);opacity:0}to{transform:none;opacity:1}}
+.alertbox h4{margin:0;font-size:19px;line-height:1.25;color:#FFB4AB}
+.alertbox p{margin:0;font-size:13px}
+.alertbox .b{border:1px solid #6B2B2F;border-radius:10px;padding:8px 10px;font-size:12px;background:#3A1418;text-align:center}
 
-/* pipeline */
-.pipe{display:grid;gap:8px}
-.stage{display:grid;grid-template-columns:34px minmax(0,1fr) auto;gap:10px;align-items:center;border:1px solid var(--line);border-radius:10px;padding:9px 12px;background:var(--surface);transition:border-color .25s,background .25s,opacity .25s}
-.stage .n{width:28px;height:28px;border-radius:50%;border:1.5px solid var(--line);display:grid;place-items:center;font-family:var(--mono);font-size:12px;color:var(--muted)}
-.stage .t b{display:block;font-size:14px}
-.stage .t span{display:block;color:var(--muted);font-size:12.5px}
-.stage .v{text-align:right;font-family:var(--mono);font-size:12.5px;white-space:nowrap}
-.stage .v small{display:block;color:var(--dim);font-family:var(--sans);font-size:11px}
-.stage.active{border-color:var(--accent);background:var(--accent-soft)}
-.stage.active .n{border-color:var(--accent);color:var(--accent)}
-.stage.done .n{border-color:var(--accent);color:var(--accent)}
-.stage.skip{opacity:.45}
-.stage.hot{border-color:var(--crit);background:var(--crit-bg)}
-.checks{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-left:44px}
-@media (max-width:700px){.checks{grid-template-columns:1fr;margin-left:0}}
-.check{border:1px solid var(--line);border-radius:10px;padding:9px 11px;transition:border-color .25s,background .25s,opacity .25s}
-.check b{font-size:13.5px;display:block}
-.check span{color:var(--muted);font-size:12px;display:block}
-.check .cv{font-family:var(--mono);font-size:18px;margin-top:4px}
-.check .cv small{font-size:11px;color:var(--dim);font-family:var(--sans)}
-.check.active{border-color:var(--accent);background:var(--accent-soft)}
-.check.hot{border-color:var(--crit);background:var(--crit-bg)}
-.check.skip{opacity:.45}
-.boundary{border:1.5px dashed var(--accent);border-radius:14px;padding:12px;position:relative}
-.card .boundary::before{background:var(--surface)}
-.boundary::before{content:"ON THE PHONE · NOTHING UPLOADED";position:absolute;top:-9px;left:14px;background:var(--bg);padding:0 8px;font-size:11px;letter-spacing:.08em;color:var(--accent);font-weight:600}
+/* workflow */
+.flowwrap{overflow-x:auto;min-width:0}
+.flow{position:relative;min-width:960px;height:470px}
+.flow svg.edges{position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none}
+.edges path{fill:none;stroke:var(--edge);stroke-width:1.6;transition:stroke .3s}
+.edges path.on{stroke:var(--accent);stroke-width:2.2;stroke-dasharray:6 6;animation:flow .8s linear infinite}
+.edges path.hot{stroke:var(--hot);stroke-width:2.6}
+.edges path.off{stroke-dasharray:3 5;opacity:.45}
+@keyframes flow{to{stroke-dashoffset:-12}}
+.node{position:absolute;transform:translate(-50%,-50%);width:146px;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:11px 13px;transition:border-color .3s,background .3s,opacity .3s,box-shadow .3s}
+.node h5{margin:0;font-size:14px;font-weight:600}
+.node small{display:block;color:var(--dim);font-size:11.5px;margin-top:1px}
+.node .v{font-family:var(--mono);font-size:21px;margin-top:8px;font-variant-numeric:tabular-nums;min-height:28px}
+.node .v small{font-family:var(--sans);font-size:11px}
+.node .v.t{font-family:var(--sans);font-size:15px;font-weight:600}
+.node.on{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.node.hot{border-color:var(--hot);background:var(--hot-soft);box-shadow:none}
+.node.off{opacity:.38}
+.chip{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.04em;padding:2px 8px;border-radius:999px;border:1px solid currentColor;vertical-align:middle}
+.chip.LOW{color:var(--low)}.chip.MEDIUM{color:var(--med)}.chip.HIGH{color:var(--high)}.chip.CRITICAL{color:var(--crit)}
+.spark{width:100%;height:34px;margin-top:6px;display:block}
+.blk{font-family:var(--mono);font-size:10.5px;color:var(--muted);margin-top:6px}
+.zone{position:absolute;border:1.5px dashed var(--accent);border-radius:16px;opacity:.6;pointer-events:none}
+.zone span{position:absolute;top:-9px;left:16px;background:var(--bg);padding:0 8px;font-size:10.5px;letter-spacing:.1em;color:var(--accent);font-weight:600}
 
-/* controls + timeline */
-.controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.controls .primary{background:var(--accent);color:var(--on-accent);border-color:var(--accent)}
-.controls .spacer{margin-left:auto}
-.speed button[aria-pressed="true"]{color:var(--ink);border-color:var(--accent)}
-.tl{overflow-x:auto;margin-top:12px}
-table{border-collapse:collapse;width:100%;font-size:13px}
-th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
-th{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600}
-td.num,th.num{text-align:right}
-tr.cur td{background:var(--accent-soft)}
-tr.future td{color:var(--dim)}
-tr.alert td{background:var(--crit-bg)}
-.barcell{width:150px}
-.mini{position:relative;height:10px;background:var(--surface2);border-radius:5px;overflow:hidden}
-.mini i{position:absolute;left:0;top:0;bottom:0;background:var(--accent);border-radius:5px}
-.mini .thr{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--crit);left:40%}
-.chip{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.04em;padding:1px 8px;border-radius:999px}
-.chip.LOW{background:var(--low-bg);color:var(--low)}.chip.MEDIUM{background:var(--med-bg);color:var(--med)}.chip.HIGH{background:var(--high-bg);color:var(--high)}.chip.CRITICAL{background:var(--crit-bg);color:var(--crit)}
-
-.lower{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:20px;margin-top:20px}
-@media (max-width:980px){.lower{grid-template-columns:1fr}}
-.teach p{margin:0 0 8px}
-.teach .measured{border-left:3px solid var(--accent);padding-left:10px;color:var(--muted);font-size:13.5px}
-.teach .limit{border-left:3px solid var(--med);padding-left:10px;color:var(--muted);font-size:13.5px}
-.chain{display:grid;gap:8px}
-.blk{border:1px solid var(--line);border-radius:10px;padding:9px 11px;font-size:12px}
-.blk b{font-size:12.5px}
-.blk code{font-family:var(--mono);font-size:11px;color:var(--muted);word-break:break-all;display:block}
-.blk.bad{border-color:var(--crit);background:var(--crit-bg)}
-.verify{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;align-items:center}
-.ok{color:var(--low);font-weight:700}.bad-t{color:var(--crit);font-weight:700}
-
-/* architecture view */
-.arch h2{font-size:26px;margin:22px 0 4px}
-.arch .lede{color:var(--muted);max-width:75ch;margin:0 0 18px}
-.flow{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:10px}
-@media (max-width:1100px){.flow{grid-template-columns:repeat(2,minmax(0,1fr))}}
-.flow .f{border:1px solid var(--line);border-radius:12px;padding:12px;background:var(--surface);position:relative}
-.flow .f .k{font-family:var(--mono);font-size:12px;color:var(--accent)}
-.flow .f b{display:block;margin:4px 0}
-.flow .f span{font-size:12.5px;color:var(--muted);display:block}
-.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:20px;margin-top:20px}
-.pill{display:inline-block;font-size:11px;font-weight:700;padding:1px 8px;border-radius:999px}
-.pill.g{background:var(--low-bg);color:var(--low)}.pill.r{background:var(--crit-bg);color:var(--crit)}.pill.b{background:var(--accent-soft);color:var(--accent)}.pill.a{background:var(--med-bg);color:var(--med)}
-.stat{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}
-.stat div{border:1px solid var(--line);border-radius:10px;padding:10px 12px}
-.stat b{display:block;font-size:20px;font-family:var(--mono)}
-.stat span{font-size:12.5px;color:var(--muted)}
-ul.tight{margin:0;padding-left:18px}
-ul.tight li{margin:4px 0}
-footer{color:var(--dim);font-size:12.5px;padding-block:28px 24px}
-footer kbd{font-family:var(--mono);border:1px solid var(--line);border-radius:4px;padding:0 5px}
+/* bottom */
+.take{padding:0 28px 8px;color:var(--muted);font-size:14px;min-height:22px}
+.take b{color:var(--ink)}
+footer{border-top:1px solid var(--line);padding:10px 28px 14px;display:grid;gap:10px}
+.wins{display:flex;gap:6px;flex-wrap:wrap;align-items:center;min-height:30px}
+.w{flex:1;min-width:84px;border:1px solid var(--line);border-radius:8px;padding:5px 9px;font-family:var(--mono);font-size:12px;color:var(--dim);display:flex;justify-content:space-between;align-items:center;background:transparent}
+.w.done{color:var(--ink)}
+.w.cur{border-color:var(--accent);background:var(--accent-soft);color:var(--ink)}
+.w em{font-style:normal;font-size:10px;font-weight:700;color:var(--hot);border:1px solid var(--hot);border-radius:4px;padding:0 4px}
+.ctl{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.ctl button{border:1px solid var(--line);background:transparent;border-radius:8px;padding:6px 14px}
+.ctl .play{background:var(--ink);color:var(--bg);border-color:var(--ink);min-width:86px}
+.ctl .sp[aria-pressed="true"]{border-color:var(--ink)}
+.ctl .info{margin-left:auto;color:var(--dim);font-size:12px}
 [hidden]{display:none!important}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
 <body>
-<header class="top"><div class="wrap">
+<header>
   <div class="brand">
-    <svg width="34" height="34" viewBox="0 0 48 48" aria-hidden="true"><path d="M24 4 40 10v13c0 10.5-6.9 18.6-16 21-9.1-2.4-16-10.5-16-21V10z" fill="var(--accent)"/><path d="M14 25h3l2-6 3 12 3-15 3 12 2-3h4" fill="none" stroke="var(--bg)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    <div><b>SwarKavach</b><small>SIH26104 · on-device voice-clone shield · simulation</small></div>
+    <svg width="28" height="28" viewBox="0 0 48 48" aria-hidden="true"><path d="M24 4 40 10v13c0 10.5-6.9 18.6-16 21-9.1-2.4-16-10.5-16-21V10z" fill="var(--accent)"/><path d="M14 25h3l2-6 3 12 3-15 3 12 2-3h4" fill="none" stroke="var(--bg)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <b>SwarKavach</b><span>SIH26104 · on-device voice-clone shield</span>
   </div>
-  <div class="tabs" role="group" aria-label="View">
-    <button id="tabSim" aria-pressed="true">Simulation</button>
-    <button id="tabArch" aria-pressed="false">Architecture</button>
-  </div>
-  <button class="ghost" id="btnTheme" title="T">Light / dark</button>
-</div></header>
+  <div class="scen" id="scen"></div>
+  <button class="icon" id="theme" title="Theme (T)" aria-label="Toggle theme">◐</button>
+</header>
 
-<main id="viewSim" class="wrap">
-  <div class="scen" id="scenBar" role="group" aria-label="Scenarios"></div>
-  <div class="grid">
-    <div>
-      <div class="phone"><div class="screen">
-        <div class="notch"></div>
-        <div class="sbar"><span id="pClock">10:42</span><span>5G · 82%</span></div>
-        <span class="pdemo">SIMULATION</span>
-        <div class="pscreen" id="pScreen"></div>
-        <div id="pAlert" hidden></div>
-      </div></div>
-    </div>
-    <div class="card">
-      <div class="controls">
-        <button class="ghost primary" id="btnPlay" title="Space">▶ Play</button>
-        <button class="ghost" id="btnBack" title="←">◀ Step</button>
-        <button class="ghost" id="btnNext" title="→">Step ▶</button>
-        <button class="ghost" id="btnReset" title="R">Restart</button>
-        <span class="spacer"></span>
-        <span class="speed" role="group" aria-label="Speed">
-          <button class="ghost" data-speed="0.5" aria-pressed="false">0.5×</button>
-          <button class="ghost" data-speed="1" aria-pressed="true">1×</button>
-          <button class="ghost" data-speed="2" aria-pressed="false">2×</button>
-        </span>
-      </div>
-      <p id="stepLabel" style="margin:12px 0 10px;color:var(--muted);font-size:13.5px"></p>
-      <div class="boundary">
-        <div class="pipe">
-          <div class="stage" id="s1"><div class="n">1</div><div class="t"><b>Decide whether to check</b><span>Call-screening service + contacts lookup → policy engine</span></div><div class="v" id="v1"></div></div>
-          <div class="stage" id="s2"><div class="n">2</div><div class="t"><b>Get the caller's voice</b><span>Live mic capture (speakerphone) · after-call recording · built-in</span></div><div class="v" id="v2"></div></div>
-          <div class="stage" id="s3"><div class="n">3</div><div class="t"><b>Clean the audio</b><span>5 s window · Silero VAD · your own voice removed (owner voiceprint)</span></div><div class="v" id="v3"></div></div>
-          <div class="checks">
-            <div class="check" id="c1"><b>Voice authenticity</b><span>wav2vec2 deepfake model · ONNX</span><div class="cv" id="cv1">–</div></div>
-            <div class="check" id="c2"><b>Matches the saved voice</b><span>WeSpeaker voiceprint · 256 numbers</span><div class="cv" id="cv2">–</div></div>
-            <div class="check" id="c3"><b>Call context</b><span>number rules + scam phrases (Vosk en-IN)</span><div class="cv" id="cv3">–</div></div>
-          </div>
-          <div class="stage" id="s5"><div class="n">5</div><div class="t"><b>Combine (noisy-OR)</b><span>1 − (1 − 0.9·a)(1 − 0.9·s)(1 − 0.3·c) · context alone can never alert</span></div><div class="v" id="v5"></div></div>
-          <div class="stage" id="s6"><div class="n">6</div><div class="t"><b>Risk engine</b><span>EMA rises fast (0.60), falls slowly (0.20) · alert = 2 windows in a row ≥ 0.40</span></div><div class="v" id="v6"></div></div>
-          <div class="stage" id="s7"><div class="n">7</div><div class="t"><b>Alert + audit</b><span>Full-screen warning · report to 1930 · SHA-256 hash-chained record</span></div><div class="v" id="v7"></div></div>
-        </div>
-      </div>
-      <div class="tl"><table>
-        <thead><tr><th>Window</th><th>Audio</th><th class="num">Acoustic</th><th class="num">Speaker</th><th class="num">Context</th><th class="num">Window score</th><th class="barcell">vs 0.40 line</th><th class="num">EMA</th><th>Level</th><th>Alert</th></tr></thead>
-        <tbody id="tlBody"></tbody>
-      </table></div>
-    </div>
-  </div>
+<main>
+  <div class="phone"><div class="screen"><div class="notch"></div><div class="ps" id="ps"></div><div id="pa" hidden></div></div></div>
 
-  <div class="lower">
-    <div class="card teach"><h3>What this scenario shows</h3><div id="teach"></div></div>
-    <div class="card"><h3>Tamper-evident alert log</h3>
-      <div class="chain" id="chain"></div>
-      <div class="verify"><button class="ghost" id="btnVerify">Verify chain</button><button class="ghost" id="btnTamper">Tamper with a record</button><span id="verifyOut"></span></div>
-    </div>
-  </div>
-</main>
-
-<main id="viewArch" class="wrap arch" hidden>
-  <h2>How SwarKavach protects a phone</h2>
-  <p class="lede">The same three-check design as our enterprise server, moved onto the phone. Every model runs on the device; audio is analysed in 5-second windows in memory and thrown away. Only scores, reasons and a hashed number are stored.</p>
-  <div class="boundary"><div class="flow">
-    <div class="f"><span class="k">1</span><b>Policy</b><span>Unknown numbers always checked. Contacts set to Ignore are skipped. "Protect" contacts get their voice verified.</span></div>
-    <div class="f"><span class="k">2</span><b>Capture</b><span>Live (accessibility + mic on speaker), after-call recording scan, or built-in system access.</span></div>
-    <div class="f"><span class="k">3</span><b>Clean</b><span>Silero VAD keeps speech; owner voiceprint removes your own side of the call.</span></div>
-    <div class="f"><span class="k">4</span><b>Three checks</b><span>Synthetic voice (wav2vec2) · voiceprint match (WeSpeaker) · scam context (rules + offline speech recognition).</span></div>
-    <div class="f"><span class="k">5</span><b>Fusion</b><span>Noisy-OR with caps 0.90 / 0.90 / 0.30: one strong signal can alert; context alone never can.</span></div>
-    <div class="f"><span class="k">6</span><b>Risk engine</b><span>Asymmetric EMA + two-window rule, so a cough or line glitch can't trigger an alarm.</span></div>
-    <div class="f"><span class="k">7</span><b>Act</b><span>Full-screen alert, 1930 / cybercrime.gov.in / Chakshu, hash-chained audit record.</span></div>
+  <div class="flowwrap"><div class="flow" id="flow">
+    <svg class="edges" id="edges"></svg>
+    <div class="zone" id="zone"><span>ON THE PHONE · NOTHING UPLOADED</span></div>
+    <div class="node" id="nPolicy" style="left:7.5%;top:50%"><h5>Policy</h5><small>who is calling?</small><div class="v t" id="vPolicy"></div></div>
+    <div class="node" id="nListen" style="left:23.5%;top:50%"><h5>Listen</h5><small>5 s window</small><div class="v" id="vListen"></div></div>
+    <div class="node" id="nA" style="left:42%;top:17%"><h5>Synthetic voice?</h5><small>deepfake model</small><div class="v" id="vA"></div></div>
+    <div class="node" id="nS" style="left:42%;top:50%"><h5>Same person?</h5><small>voiceprint</small><div class="v" id="vS"></div></div>
+    <div class="node" id="nC" style="left:42%;top:83%"><h5>Scam context?</h5><small>number + phrases</small><div class="v" id="vC"></div></div>
+    <div class="node" id="nF" style="left:60%;top:50%"><h5>Fusion</h5><small>noisy-OR</small><div class="v" id="vF"></div></div>
+    <div class="node" id="nR" style="left:76.5%;top:50%;width:156px"><h5>Risk</h5><small>2 windows ≥ 0.40</small><div class="v" id="vR"></div><svg class="spark" id="spark" viewBox="0 0 100 34" preserveAspectRatio="none"></svg></div>
+    <div class="node" id="nV" style="left:92%;top:50%;width:124px"><h5>Verdict</h5><small>alert + audit</small><div class="v t" id="vV"></div><div class="blk" id="blk"></div></div>
   </div></div>
-
-  <div class="cols">
-    <div class="card"><h3>Three ways to hear the caller</h3>
-      <table><thead><tr><th>Mode</th><th>How</th><th>Play Store</th></tr></thead><tbody>
-        <tr><td><b>Live</b></td><td style="white-space:normal">Accessibility service + foreground mic service while the call is on speaker. Starts automatically or with one tap.</td><td><span class="pill r">sideload / enterprise</span></td></tr>
-        <tr><td><b>After-call</b></td><td style="white-space:normal">Scans the dialer's own recording seconds after hang-up and warns before you act on the call.</td><td><span class="pill g">allowed</span></td></tr>
-        <tr><td><b>Built-in</b></td><td style="white-space:normal">Pre-installed by a phone maker or operator with system call-audio permission (the production path).</td><td><span class="pill g">allowed</span></td></tr>
-      </tbody></table>
-      <p style="color:var(--muted);font-size:13px;margin:10px 0 0">Android does not give ordinary apps call audio since Android 10, so we designed around it instead of pretending otherwise.</p>
-    </div>
-    <div class="card"><h3>Who to protect (the user decides)</h3>
-      <table><thead><tr><th>Caller</th><th>Default</th></tr></thead><tbody>
-        <tr><td style="white-space:normal">Unknown number</td><td><span class="pill r">always check</span></td></tr>
-        <tr><td style="white-space:normal">Contact set to Ignore</td><td><span class="pill g">skip, no battery</span></td></tr>
-        <tr><td style="white-space:normal">Contact set to Protect (family, boss)</td><td><span class="pill b">verify the voice</span></td></tr>
-        <tr><td style="white-space:normal">International number</td><td><span class="pill r">always check</span></td></tr>
-        <tr><td style="white-space:normal">"Bank" not calling from a 1600-series number</td><td><span class="pill a">raise context</span></td></tr>
-      </tbody></table>
-      <p style="color:var(--muted);font-size:13px;margin:10px 0 0">Learning is opt-in: voiceprints of Protect contacts are built from your own past call recordings (256 numbers each, never audio).</p>
-    </div>
-  </div>
-
-  <div class="card" style="margin-top:20px"><h3>Measured on a OnePlus CPH2707 (Android 16)</h3>
-    <div class="stat">
-      <div><b>959 ms</b><span>median per 5 s window, all three models (p95 1174 ms)</span></div>
-      <div><b>0.19×</b><span>real-time factor: about 5× faster than the call</span></div>
-      <div><b>5.3e-08</b><span>max difference phone vs Python reference scores</span></div>
-      <div><b>0 / 48</b><span>genuine ASVspoof clips flagged (AUC 0.825 per window)</span></div>
-      <div><b>0.89 vs 0.55</b><span>voiceprint similarity: same person vs different person (median)</span></div>
-      <div><b>+0.9 s</b><span>p95 cost of English (India) scam-phrase recognition</span></div>
-    </div>
-    <p style="color:var(--dim);font-size:12px;margin:10px 0 0">Sources: docs/phone/RESULTS.md and docs/phone/benchmarks/ in the project repository. Model components: acoustic 649 ms, speaker 291 ms, VAD 40 ms (medians).</p>
-  </div>
-
-  <div class="cols">
-    <div class="card"><h3>Known limits (we say them first)</h3>
-      <ul class="tight">
-        <li>Some modern commercial AI voices slip past the acoustic model (a commercial TTS sample scored 0.004). The voiceprint check still applies to Protect contacts.</li>
-        <li>One real-person phone recording was falsely flagged (0.995). Narrowband 8 kHz audio flagged 4 of 48 genuine clips. Retraining on phone-codec and Indian speech is first on the roadmap.</li>
-        <li>Hindi speech recognition costs 3 s per window on this phone, over our real-time budget; production would use a lighter keyword-spotting model.</li>
-        <li>Live capture needs the sideloaded build and speakerphone; store builds use the after-call scan.</li>
-      </ul>
-    </div>
-    <div class="card"><h3>Two editions, one engine</h3>
-      <ul class="tight">
-        <li><b>Phone edition (SwarKavach):</b> Android app, all models on-device, Hindi + English UI.</li>
-        <li><b>Enterprise edition:</b> FastAPI server + live dashboard for bank and government call centres, plugged into the existing recorded-call stream. Same fusion, same risk engine, 212 automated tests.</li>
-        <li>The phone port reproduces the Python reference exactly: 300/300 fusion, 60/60 risk-engine and 80/80 context golden test cases.</li>
-      </ul>
-    </div>
-  </div>
 </main>
 
-<footer class="wrap">
-  Keys: <kbd>Space</kbd> play/pause · <kbd>→</kbd>/<kbd>←</kbd> step · <kbd>1</kbd>–<kbd>7</kbd> scenarios · <kbd>R</kbd> restart · <kbd>V</kbd> simulation/architecture · <kbd>T</kbd> theme.
-  Scores come from the Python reference run on the same audio; "measured on phone" lines come from the app's demo mode on the test phone. Fully offline, no network calls.
+<div class="take" id="take"></div>
+<footer>
+  <div class="wins" id="wins"></div>
+  <div class="ctl">
+    <button class="play" id="play">Play</button>
+    <button id="back">◀ Step</button>
+    <button id="next">Step ▶</button>
+    <button id="reset" title="Restart (R)" aria-label="Restart">↺</button>
+    <span style="width:10px"></span>
+    <button class="sp" data-s="0.5" aria-pressed="false">0.5×</button>
+    <button class="sp" data-s="1" aria-pressed="true">1×</button>
+    <button class="sp" data-s="2" aria-pressed="false">2×</button>
+    <span class="info">Space · ← → · 1–7 · T &nbsp;·&nbsp; scores: measured reference values of the app's demo audio</span>
+  </div>
 </footer>
 
 <script>
 (function(){
 "use strict";
-/* ---------- engine: mirrors src/fusion.py and src/risk_engine.py ---------- */
-var CAPS={a:0.90,s:0.90,c:0.30}, TH=0.40, ATTACK=0.60, RELEASE=0.20, SUSTAIN=2;
-function level(x){return x>=0.6?"CRITICAL":x>=0.4?"HIGH":x>=0.2?"MEDIUM":"LOW";}
-function fuse(a,s,c){var ca=CAPS.a*a,cs=CAPS.s*s,cc=CAPS.c*c;
-  var f=1-(1-ca)*(1-cs)*(1-cc);var dom=ca>=cs&&ca>=cc?"acoustic":cs>=cc?"speaker":"context";return {f:f,dom:dom};}
-function run(sc){var ema=0,init=false,streak=0,fired=null,peak=0,rows=[];
-  sc.a.forEach(function(a,i){var s=sc.s?sc.s[i]:0;var r=fuse(a,s==null?0:s,sc.c);
-    if(!init){ema=r.f;init=true}else{ema=(r.f>ema?ATTACK:RELEASE)*r.f+(1-(r.f>ema?ATTACK:RELEASE))*ema}
-    streak=r.f>=TH?streak+1:0;var alert=streak>=SUSTAIN&&ema>=TH;if(alert&&fired===null)fired=i;peak=Math.max(peak,ema);
-    rows.push({a:a,s:s,c:sc.c,f:r.f,dom:r.dom,ema:ema,lvl:level(ema),alert:alert,streak:streak});});
+/* engine: mirrors src/fusion.py and src/risk_engine.py */
+var CAP={a:.9,s:.9,c:.3},TH=.4;
+function lvl(x){return x>=.6?"CRITICAL":x>=.4?"HIGH":x>=.2?"MEDIUM":"LOW";}
+function run(sc){var e=0,init=false,st=0,fired=null,peak=0,rows=[];
+  sc.a.forEach(function(a,i){var s=sc.s?sc.s[i]:0,ca=CAP.a*a,cs=CAP.s*s,cc=CAP.c*sc.c,f=1-(1-ca)*(1-cs)*(1-cc);
+    var dom=ca>=cs&&ca>=cc?"a":cs>=cc?"s":"c";
+    if(!init){e=f;init=true}else{var al=f>e?.6:.2;e=al*f+(1-al)*e}
+    st=f>=TH?st+1:0;var alert=st>=2&&e>=TH;if(alert&&fired===null)fired=i;peak=Math.max(peak,e);
+    rows.push({a:a,s:sc.s?s:null,c:sc.c,f:f,e:e,l:lvl(e),alert:alert,dom:dom});});
   return {rows:rows,fired:fired,peak:peak};}
 
-/* ---------- scenarios: acoustic scores = Python reference per 5 s window (android assets/demo/scenarios.json) ---------- */
-var CTX_UNKNOWN=0.25;
+/* scenarios: per-window acoustic scores = Python reference on the app's demo audio */
 var SC=[
- {key:"1",id:"genuine",label:"Genuine: Papa",caller:"Papa",num:"Saved contact",policy:"VERIFY",
-  a:[0.0042,0.0042,0.0041,0.0042],s:[0,0,0,0],c:0,
-  teach:"Papa is set to <b>Protect</b>, so every window is checked: is the voice synthetic, and is it really Papa? Both stay near zero. The system does not cry wolf on the real person.",
-  measured:"Measured on phone (demo mode): CLEAR, peak 0.0038, LOW, no alert."},
- {key:"2",id:"impostor",label:"Impostor on Papa's number",caller:"Papa",num:"Saved contact",policy:"VERIFY",
-  a:[0.0041,0.0042,0.0042,0.0041],s:[1,1,1,1],c:0,
-  teach:"A real human pretending to be Papa (caller ID can be spoofed). The voice is human, so the deepfake check stays quiet, but the <b>voiceprint check</b> knows it is not Papa (mismatch 1.00). That one strong signal is enough on its own.",
-  measured:"Measured on phone (demo mode): SUSTAINED ALERT on the 2nd window (10 s of audio), peak 0.900, CRITICAL, dominant signal: speaker."},
- {key:"3",id:"clone",label:"AI clone of Papa",caller:"Papa",num:"Saved contact",policy:"VERIFY",
-  a:[0.0043,0.996,0.9956,0.9959,0.984,0.0165],s:[0,0,0,0,0,0],c:0,
-  teach:"The headline case. The clone <b>passes the voiceprint check</b> (mismatch 0.00, it sounds like Papa). The deepfake model catches the synthesis (0.996). Because we combine with noisy-OR, not an average, the acoustic signal alone carries the risk to 0.90 and the alert fires after two clone windows. This is the real captured clone call kept in our test suite.",
-  measured:"Measured on phone (demo mode): SUSTAINED ALERT on the 3rd window (window 1 is near-silence, so after 10 s of clone audio), peak 0.869, CRITICAL, dominant signal: acoustic. Our old weighted-average design never alerted on this exact call."},
- {key:"4",id:"scam",label:"Scam script, real voice",caller:"+91 98XXX XX123",num:"Unknown number",policy:"SCAN",
-  a:[0.0042,0.0042,0.0041,0.0042],s:null,c:0.85,
-  phrases:"otp, immediately, transfer",
-  teach:"Unknown caller, off-hours, first contact, and the words \"OTP\", \"immediately\", \"transfer\": context is maxed at 0.85. But context is capped at 0.30, so it raises the call to MEDIUM and <b>never accuses on its own</b>. Suspicious words are not proof of a cloned voice.",
-  measured:"Measured on phone (demo mode): CLEAR, peak 0.258, MEDIUM, dominant signal: context. No alert, by design."},
- {key:"5",id:"ignore",label:"Trusted contact (Ignore)",caller:"Riya",num:"Saved contact",policy:"SKIP",
-  a:[],s:[],c:0,
-  teach:"The user decides who to check. Riya is set to <b>Ignore</b>, so nothing runs: no microphone, no models, no battery. Unknown numbers can never be set to Ignore.",
-  measured:"Policy engine unit tests cover every branch; unknown numbers can never resolve to Skip."},
- {key:"6",id:"viraj",label:"Commercial AI voice (known miss)",caller:"+91 70XXX XX456",num:"Unknown number",policy:"SCAN",known:true,
-  a:[0.0044,0.0043],s:null,c:CTX_UNKNOWN,
-  teach:"An honest weakness. A modern commercial text-to-speech voice scores 0.004 on our acoustic model, so from an unknown number it stays LOW. We show it instead of hiding it: if this voice impersonated a <b>Protect</b> contact, the voiceprint check would still have to be fooled. Retraining on newer generators and Indian speech is first on our roadmap.",
-  measured:"Measured on phone (demo mode): CLEAR, peak 0.079, LOW. A known miss."},
- {key:"7",id:"itw",label:"Internet deepfake, unknown number",caller:"+91 81XXX XX789",num:"Unknown number",policy:"SCAN",
-  a:[0.9962,0.9961,0.9962],s:null,c:CTX_UNKNOWN,
-  teach:"A real-world deepfake from the In-the-Wild dataset, calling from an unknown number. There is no voiceprint to compare, yet the acoustic check alone raises the alert after two windows.",
-  measured:"Measured on phone (demo mode): SUSTAINED ALERT on the 2nd window (10 s of audio), peak 0.904, CRITICAL, dominant signal: acoustic."}
+ {k:"1",t:"Real Papa",who:"Papa",num:"Protect contact",pol:"Verify voice",a:[.0042,.0042,.0041,.0042],s:[0,0,0,0],c:0,
+  take:"<b>Real Papa</b> · both checks stay near zero. No false alarm."},
+ {k:"2",t:"Impostor",who:"Papa",num:"Protect contact",pol:"Verify voice",a:[.0041,.0042,.0042,.0041],s:[1,1,1,1],c:0,
+  take:"<b>Impostor on Papa's number</b> · a human voice passes the deepfake check; the voiceprint catches it."},
+ {k:"3",t:"AI clone",who:"Papa",num:"Protect contact",pol:"Verify voice",a:[.0043,.996,.9956,.9959,.984,.0165],s:[0,0,0,0,0,0],c:0,
+  take:"<b>AI clone of Papa</b> · it passes the voiceprint; the deepfake model catches it. Alert after 10 s of clone audio."},
+ {k:"4",t:"Scam words",who:"+91 98XXX XX123",num:"Unknown number",pol:"Scan",a:[.0042,.0042,.0041,.0042],s:null,c:.85,ph:"OTP · transfer",
+  take:"<b>Scam script, real voice</b> · context raises it to MEDIUM but never accuses on its own."},
+ {k:"5",t:"Ignored contact",who:"Riya",num:"Ignore contact",pol:"Skip",skip:true,a:[],s:[],c:0,
+  take:"<b>Trusted contact</b> · set to Ignore, so nothing runs. Unknown numbers can never be ignored."},
+ {k:"6",t:"Known miss",who:"+91 70XXX XX456",num:"Unknown number",pol:"Scan",a:[.0044,.0043],s:null,c:.25,
+  take:"<b>Commercial AI voice</b> · a known miss of the deepfake model, shown honestly."},
+ {k:"7",t:"Internet deepfake",who:"+91 81XXX XX789",num:"Unknown number",pol:"Scan",a:[.9962,.9961,.9962],s:null,c:.25,
+  take:"<b>Internet deepfake, unknown number</b> · the deepfake model alone raises the alert."}
 ];
 
-/* ---------- state ---------- */
-var cur=SC[2], R=run(cur), step=0, playing=false, speed=1, timer=null, stageTimers=[], audioCtx=null, beeped=false;
-var chain=[]; // {prev, ts, payload, hash}
-function maxStep(){return cur.policy==="SKIP"?2:2+cur.a.length;} // 0 ring, 1 shield, 2..: windows, last: end
-function $(id){return document.getElementById(id);}
+/* state: step 0 = ringing, 1..n = window n, n+1 = call ended (skip scenario: 0..1) */
+var cur=SC[2],R=run(cur),step=0,playing=false,speed=1,timer=null,beeped=false,ac=null,blocks=0,lastHash="";
+function $(i){return document.getElementById(i);}
+function f3(x){return x==null?"–":x.toFixed(3);}
+function last(){return cur.skip?1:R.rows.length+1;}
+function wi(){return Math.min(step-1,R.rows.length-1);}
+function ended(){return !cur.skip&&step>R.rows.length;}
 
-/* ---------- SHA-256 (offline, no SubtleCrypto needed) ---------- */
-function sha256(ascii){function rr(v,a){return (v>>>a)|(v<<(32-a));}
-  var mp=Math.pow,mw=mp(2,32),res="",words=[],bl=ascii.length*8,hash=sha256.h=sha256.h||[],k=sha256.k=sha256.k||[],pl=k.length,ic={};
-  for(var c=2;pl<64;c++){if(!ic[c]){for(var i=0;i<313;i+=c)ic[i]=c;hash[pl]=(mp(c,.5)*mw)|0;k[pl++]=(mp(c,1/3)*mw)|0;}}
-  hash=hash.slice(0,8);ascii+="\x80";while(ascii.length%64-56)ascii+="\x00";
-  for(i=0;i<ascii.length;i++){var j=ascii.charCodeAt(i);words[i>>2]|=j<<((3-i)%4)*8;}
-  words[words.length]=((bl/mw)|0);words[words.length]=bl;
-  for(j=0;j<words.length;){var w=words.slice(j,j+=16),oh=hash;hash=hash.slice(0,8);
-    for(i=0;i<64;i++){var w15=w[i-15],w2=w[i-2],a=hash[0],e=hash[4];
-      var t1=hash[7]+(rr(e,6)^rr(e,11)^rr(e,25))+((e&hash[5])^((~e)&hash[6]))+k[i]+(w[i]=(i<16)?w[i]:(w[i-16]+(rr(w15,7)^rr(w15,18)^(w15>>>3))+w[i-7]+(rr(w2,17)^rr(w2,19)^(w2>>>10)))|0);
-      var t2=(rr(a,2)^rr(a,13)^rr(a,22))+((a&hash[1])^(a&hash[2])^(hash[1]&hash[2]));
-      hash=[(t1+t2)|0].concat(hash);hash[4]=(hash[4]+t1)|0;}
-    for(i=0;i<8;i++)hash[i]=(hash[i]+oh[i])|0;}
-  for(i=0;i<8;i++)for(j=3;j+1;j--){var b=(hash[i]>>(j*8))&255;res+=((b<16)?0:"")+b.toString(16);}return res;}
-function canon(rec){return JSON.stringify({payload:rec.payload,prev_hash:rec.prev,timestamp_ms:rec.ts});}
-function appendRecord(payload){var prev=chain.length?chain[chain.length-1].hash:"0".repeat(64);
-  var rec={prev:prev,ts:Date.now(),payload:payload};rec.hash=sha256(canon(rec));chain.push(rec);renderChain();}
-function verifyChain(){var prev="0".repeat(64);for(var i=0;i<chain.length;i++){var r=chain[i];
-  if(r.prev!==prev)return {ok:false,at:i,why:"link to previous record broken"};
-  if(sha256(canon(r))!==r.hash)return {ok:false,at:i,why:"record contents were edited"};prev=r.hash;}return {ok:true,n:chain.length};}
+/* workflow edges */
+var E=[["nPolicy","nListen"],["nListen","nA"],["nListen","nS"],["nListen","nC"],["nA","nF"],["nS","nF"],["nC","nF"],["nF","nR"],["nR","nV"]];
+function drawEdges(){var fl=$("flow").getBoundingClientRect(),h="";
+  E.forEach(function(e,i){var a=$(e[0]).getBoundingClientRect(),b=$(e[1]).getBoundingClientRect();
+    var x1=a.right-fl.left,y1=a.top+a.height/2-fl.top,x2=b.left-fl.left,y2=b.top+b.height/2-fl.top,mx=(x1+x2)/2;
+    h+='<path id="e'+i+'" d="M'+x1.toFixed(1)+' '+y1.toFixed(1)+' C'+mx.toFixed(1)+' '+y1.toFixed(1)+' '+mx.toFixed(1)+' '+y2.toFixed(1)+' '+x2.toFixed(1)+' '+y2.toFixed(1)+'"/>';});
+  $("edges").innerHTML=h;
+  var p=$("nListen").getBoundingClientRect(),v=$("nV").getBoundingClientRect(),A=$("nA").getBoundingClientRect(),C=$("nC").getBoundingClientRect(),z=$("zone").style;
+  z.left=(p.left-fl.left-14)+"px";z.top=(A.top-fl.top-22)+"px";z.width=(v.right-p.left+28)+"px";z.height=(C.bottom-A.top+44)+"px";
+  paint();}
+function edge(i,c){var p=$("e"+i);if(p)p.setAttribute("class",c||"");}
+function node(id,c){var n=$(id);n.classList.remove("on","hot","off");if(c)n.classList.add(c);}
 
-/* ---------- rendering ---------- */
-function fmt(x,d){return x==null?"–":x.toFixed(d==null?3:d);}
-function renderScenBar(){var bar=$("scenBar");bar.innerHTML="";SC.forEach(function(s){var b=document.createElement("button");
-  b.innerHTML="<kbd>"+s.key+"</kbd>"+s.label;b.setAttribute("aria-pressed",s===cur);if(s.known)b.classList.add("known");
-  b.onclick=function(){select(s)};bar.appendChild(b);});}
-function select(s){cur=s;R=run(s);step=0;beeped=false;stop();renderScenBar();render();}
-
-function policyText(){return cur.policy==="SKIP"?"Skip":cur.policy==="VERIFY"?"Verify voice":"Scan";}
-function policyReason(){return cur.policy==="SKIP"?cur.caller+" is set to Ignore":cur.policy==="VERIFY"?cur.caller+" is set to Protect":"Not in your contacts: always checked";}
-
-function gaugeSvg(v,lvl){var col={LOW:"#5BD27E",MEDIUM:"#FFC94D",HIGH:"#FF8A50",CRITICAL:"#FF6B6B"}[lvl];
-  var ang=Math.PI*(1-v),x=100+80*Math.cos(ang),y=100-80*Math.sin(ang);var large=0;
-  return '<svg viewBox="0 0 200 110" aria-hidden="true"><path d="M20 100 A80 80 0 0 1 180 100" fill="none" stroke="#24323A" stroke-width="14" stroke-linecap="round"/>'+
-   (v>0.005?'<path d="M20 100 A80 80 0 '+large+' 1 '+x.toFixed(1)+' '+y.toFixed(1)+'" fill="none" stroke="'+col+'" stroke-width="14" stroke-linecap="round"/>':"")+
-   '<line x1="'+(100+70*Math.cos(Math.PI*0.6)).toFixed(1)+'" y1="'+(100-70*Math.sin(Math.PI*0.6)).toFixed(1)+'" x2="'+(100+94*Math.cos(Math.PI*0.6)).toFixed(1)+'" y2="'+(100-94*Math.sin(Math.PI*0.6)).toFixed(1)+'" stroke="#FF6B6B" stroke-width="2"/></svg>';}
-
-function renderPhone(){var ps=$("pScreen"),pa=$("pAlert"),ms=maxStep();pa.hidden=true;
-  var initials=cur.caller.charAt(0)==="+"?"?":cur.caller.charAt(0);
-  if(step===0){ps.innerHTML='<div class="caller"><div class="av ring">'+initials+'</div><div class="nm">'+cur.caller+'</div><div class="sub">'+cur.num+' · incoming call</div></div>'+
-    '<div style="text-align:center"><span class="pchip">'+policyText()+'</span></div>'+
-    (cur.policy==="SKIP"?'<div class="pcard"><b>Trusted contact</b>'+policyReason()+'. SwarKavach stays off.</div>':'<div class="pcard notif"><b>SwarKavach</b>'+policyReason()+'. Tap to shield this call (put it on speaker).</div>')+
-    '<div class="callbtns"><span style="background:#B3261E">End</span><span style="background:#1B6E35">Answer</span></div>';return;}
-  if(cur.policy==="SKIP"){ps.innerHTML='<div class="ptag">Call in progress · '+cur.caller+'</div><div class="pcard"><b>Not checked</b>'+cur.caller+' is a trusted contact (Ignore). No microphone, no models, no battery used.</div><div class="pcard"><b>Unknown numbers</b>are always checked. That rule can only be paused for 1 hour, never turned off.</div>';return;}
-  if(step===1){ps.innerHTML='<div class="ptag">Shielding this call</div><div class="pcard notif"><b>Listening on this phone</b>Keep the call on speaker so the caller\'s voice can be heard. Audio is analysed in memory and thrown away.</div><div class="pcard"><b>First result</b>appears after 5 seconds of audio.</div>';return;}
-  var wi=Math.min(step-2,R.rows.length-1),row=R.rows[wi],ended=step>=ms;
-  var phrases=cur.phrases&&wi>=0?'<div style="font-size:11.5px;color:var(--phone-muted)">Caller mentioned: '+cur.phrases+'</div>':'';
-  var sp=cur.s?('<span>'+fmt(row.s,2)+'</span><div class="bar"><i style="width:'+(row.s*100)+'%"></i></div>'):'<span class="na">not assessed</span><div class="bar"><i style="width:0"></i></div>';
-  ps.innerHTML='<div class="ptag">'+(ended?'Call ended · result':'Live call check · window '+(wi+1))+'</div>'+
-   '<div class="gauge">'+gaugeSvg(row.ema,row.lvl)+'<div class="gval"><div class="pct num">'+Math.round(row.ema*100)+'%</div><span class="lvl '+row.lvl+'">'+row.lvl+'</span></div></div>'+
-   '<div class="pcard sig"><span>Voice authenticity (fake)</span><span>'+fmt(row.a,3)+'</span><div class="bar"><i style="width:'+(row.a*100)+'%"></i></div>'+
-   '<span>Mismatch vs saved voice</span>'+sp+
-   '<span>Call context</span><span>'+fmt(row.c,2)+'</span><div class="bar"><i style="width:'+(row.c*100)+'%"></i></div></div>'+phrases+
-   (ended?'<div class="pcard"><b>'+(R.fired!==null?'Alert raised at window '+(R.fired+1):'No alert')+'</b>Peak risk '+fmt(R.peak,3)+' · '+level(R.peak)+'. '+(R.fired!==null?'Audit record sealed.':'')+'</div>':'<div style="font-size:11.5px;color:var(--phone-muted)">5 s of audio scored on the phone in about 1 s</div>');
-  if(R.fired!==null&&wi>=R.fired&&!ended){var dom=R.rows[R.fired].dom;var pct=Math.round(row.ema*100);
-    pa.hidden=false;pa.className="palert";
-    pa.innerHTML='<h4>'+(dom==="speaker"?'This voice doesn\'t match '+cur.caller+' ('+pct+'%)':'Likely AI-cloned voice ('+pct+'%)')+'</h4>'+
-     '<p><b>Do NOT share OTP / UPI PIN / money.</b></p><p>Hang up and call back on the number saved in your contacts.</p>'+
-     '<div class="pb">Report to 1930 (opens the dialer)</div><div class="pb">Report at cybercrime.gov.in</div><div class="pb">Report on Sanchar Saathi (Chakshu)</div><div class="pb" style="opacity:.75">I trust this caller (mark false alarm)</div>';}
+function paint(){
+  ["nPolicy","nListen","nA","nS","nC","nF","nR","nV"].forEach(function(n){node(n,"")});E.forEach(function(_,i){edge(i,"")});
+  ["vListen","vA","vS","vC","vF","vR","vV","blk"].forEach(function(i){$(i).innerHTML=""});$("spark").innerHTML="";
+  $("vPolicy").textContent=cur.pol;
+  if(step===0){node("nPolicy","on");return;}
+  if(cur.skip){node("nPolicy","on");["nListen","nA","nS","nC","nF","nR","nV"].forEach(function(n){node(n,"off")});E.forEach(function(_,i){edge(i,"off")});
+    $("vV").textContent="Not checked";return;}
+  var k=wi(),r=R.rows[k],done=ended();
+  edge(0,"on");node("nListen",done?"":"on");$("vListen").textContent=done?"end":"W"+(k+1);
+  edge(1,r.a>=.5?"hot":"on");node("nA",r.a>=.5?"hot":"on");$("vA").textContent=f3(r.a);
+  if(cur.s){edge(2,r.s>=.5?"hot":"on");node("nS",r.s>=.5?"hot":"on");$("vS").textContent=r.s.toFixed(2);}
+  else{edge(2,"off");node("nS","off");$("vS").innerHTML='<small>no saved voice</small>';}
+  edge(3,r.c>=.5?"hot":"on");node("nC",r.c>=.5?"hot":"on");$("vC").innerHTML=r.c.toFixed(2)+(cur.ph?'<small>'+cur.ph+'</small>':'');
+  edge(4,r.a>=.5?"hot":"on");edge(5,cur.s?(r.s>=.5?"hot":"on"):"off");edge(6,"on");
+  node("nF",r.f>=TH?"hot":"on");$("vF").textContent=f3(r.f);
+  edge(7,r.f>=TH?"hot":"on");node("nR",r.alert?"hot":"on");
+  $("vR").innerHTML=f3(r.e)+' <span class="chip '+r.l+'">'+r.l+'</span>';
+  var n=Math.max(R.rows.length-1,1),pts=R.rows.slice(0,k+1).map(function(x,i){return (i/n*100).toFixed(1)+","+(32-x.e*30).toFixed(1)}).join(" ");
+  $("spark").innerHTML='<line x1="0" x2="100" y1="20" y2="20" stroke="var(--hot)" stroke-width="1" stroke-dasharray="3 3" vector-effect="non-scaling-stroke"/>'+
+    '<polyline points="'+pts+'" fill="none" stroke="var(--ink)" stroke-width="1.6" vector-effect="non-scaling-stroke"/>';
+  var fired=R.fired!==null&&k>=R.fired;
+  edge(8,fired?"hot":"on");node("nV",fired?"hot":"on");
+  $("vV").innerHTML=fired?'<span class="chip CRITICAL">ALERT</span>':'<span class="chip LOW">CLEAR</span>';
+  if(fired)$("blk").textContent="block #"+blocks+" · "+lastHash.slice(0,8);
 }
 
-function setStage(id,cls){var el=$(id);el.classList.remove("active","done","skip","hot");if(cls)cls.split(" ").forEach(function(c){if(c)el.classList.add(c)});}
-function clearStageTimers(){stageTimers.forEach(clearTimeout);stageTimers=[];}
-function renderPipe(animate){clearStageTimers();var ms=maxStep();var ids=["s1","s2","s3","c1","c2","c3","s5","s6","s7"];
-  ids.forEach(function(i){setStage(i,"")});["v1","v2","v3","v5","v6","v7","cv1","cv2","cv3"].forEach(function(i){$(i).innerHTML=i.indexOf("cv")===0?"–":"";});
-  $("v1").innerHTML=policyText()+"<small>"+policyReason()+"</small>";
-  if(step===0){setStage("s1","active");return;}
-  setStage("s1","done");
-  if(cur.policy==="SKIP"){ids.slice(1).forEach(function(i){setStage(i,"skip")});$("v2").innerHTML="off<small>trusted contact</small>";return;}
-  $("v2").innerHTML="Live<small>accessibility · mic · speaker</small>";
-  if(step===1){setStage("s2","active");return;}
-  setStage("s2","done");
-  var wi=Math.min(step-2,R.rows.length-1),row=R.rows[wi],ended=step>=ms;
-  var seq=[["s3",function(){$("v3").innerHTML="window "+(wi+1)+"<small>VAD ~40 ms</small>";}],
-    ["c1",function(){$("cv1").innerHTML=fmt(row.a,3)+" <small>P(fake) · ~650 ms</small>";if(row.a>=0.5)setStage("c1","hot");}],
-    ["c2",function(){if(cur.s){$("cv2").innerHTML=fmt(row.s,2)+" <small>mismatch · ~290 ms</small>";if(row.s>=0.5)setStage("c2","hot");}else{$("cv2").innerHTML="<small>not run: no saved voice for an unknown number</small>";setStage("c2","skip");}}],
-    ["c3",function(){$("cv3").innerHTML=fmt(row.c,2)+" <small>"+(cur.phrases?"phrases: "+cur.phrases:(row.c>0?"unknown number":"saved contact"))+"</small>";}],
-    ["s5",function(){$("v5").innerHTML=fmt(row.f,3)+"<small>window score · dominant: "+row.dom+"</small>";if(row.f>=TH)setStage("s5","hot");}],
-    ["s6",function(){$("v6").innerHTML=fmt(row.ema,3)+' <span class="chip '+row.lvl+'">'+row.lvl+"</span><small>"+row.streak+" window(s) in a row ≥ 0.40</small>";if(row.alert)setStage("s6","hot");}],
-    ["s7",function(){if(R.fired!==null&&wi>=R.fired){$("v7").innerHTML=(wi===R.fired?"ALERT fired":"alert active")+"<small>record #"+chain.length+" sealed</small>";setStage("s7","hot");}else $("v7").innerHTML="no alert<small>evidence must persist 2 windows</small>";}]];
-  var gap=animate&&!ended?Math.max(90,260/speed):0;
-  seq.forEach(function(p,k){var fn=function(){if(k>0){var prev=seq[k-1][0];var pe=$(prev);if(pe.classList.contains("active")){pe.classList.remove("active");pe.classList.add("done");}}
-      if(!$(p[0]).classList.contains("skip"))setStage(p[0],"active");p[1]();
-      if(k===seq.length-1){var last=$(p[0]);if(last.classList.contains("active")){last.classList.remove("active");last.classList.add("done");}}};
-    if(gap)stageTimers.push(setTimeout(fn,gap*k));else fn();});
-  if(ended){ids.forEach(function(i){var e=$(i);if(e.classList.contains("active")){e.classList.remove("active");e.classList.add("done");}});}
+/* phone */
+function gauge(v,l){var c={LOW:"#5BD27E",MEDIUM:"#FFC94D",HIGH:"#FF8A50",CRITICAL:"#FF6B6B"}[l],an=Math.PI*(1-v),x=100+78*Math.cos(an),y=100-78*Math.sin(an),t=Math.PI*.6;
+  return '<svg viewBox="0 0 200 108" aria-hidden="true"><path d="M22 100 A78 78 0 0 1 178 100" fill="none" stroke="#24323A" stroke-width="13" stroke-linecap="round"/>'+
+  (v>.005?'<path d="M22 100 A78 78 0 0 1 '+x.toFixed(1)+' '+y.toFixed(1)+'" fill="none" stroke="'+c+'" stroke-width="13" stroke-linecap="round"/>':'')+
+  '<line x1="'+(100+66*Math.cos(t)).toFixed(1)+'" y1="'+(100-66*Math.sin(t)).toFixed(1)+'" x2="'+(100+90*Math.cos(t)).toFixed(1)+'" y2="'+(100-90*Math.sin(t)).toFixed(1)+'" stroke="#FF6B6B" stroke-width="2"/></svg>';}
+function bar(lbl,v,txt){return '<div class="bar"><span>'+lbl+'</span><span class="mono">'+txt+'</span><i><u class="'+(v>=.5?"h":"")+'" style="width:'+(v*100)+'%"></u></i></div>';}
+function phone(){var ps=$("ps"),pa=$("pa");pa.hidden=true;var ini=cur.who.charAt(0)==="+"?"?":cur.who.charAt(0);
+  if(step===0){ps.innerHTML='<div class="av ring">'+ini+'</div><div class="nm">'+cur.who+'</div><div class="sub">'+cur.num+'</div><span class="pill">'+cur.pol+'</span>'+
+    (cur.skip?'':'<div class="pcard n">Tap to shield this call</div>')+'<div class="btns"><i style="background:#B3261E"></i><i style="background:#1B6E35"></i></div>';return;}
+  if(cur.skip){ps.innerHTML='<div class="tag">'+cur.who+' · in call</div><div class="av">'+ini+'</div><div class="pcard" style="text-align:center">Trusted contact<br>Not checked</div>';return;}
+  var k=wi(),r=R.rows[k],done=ended();
+  ps.innerHTML='<div class="tag">'+(done?"Call ended":"Live check · W"+(k+1))+'</div><div class="gauge">'+gauge(r.e,r.l)+'<div class="gv"><b>'+Math.round(r.e*100)+'%</b><span class="lv '+r.l+'">'+r.l+'</span></div></div>'+
+    '<div class="pcard bars">'+bar("Synthetic voice",r.a,r.a.toFixed(3))+(cur.s?bar("Not the same person",r.s,r.s.toFixed(2)):'<div class="bar"><span>Same person</span><span class="mono" style="color:#9AA6AD">n/a</span></div>')+bar("Scam context",r.c,r.c.toFixed(2))+'</div>'+
+    (done?'<div class="pcard" style="text-align:center">'+(R.fired!==null?'Alert raised · audit sealed':'No alert')+'</div>':'');
+  if(R.fired!==null&&k>=R.fired&&!done){var dom=R.rows[R.fired].dom;pa.hidden=false;pa.className="alertbox";
+    pa.innerHTML='<h4>'+(dom==="s"?"Voice doesn't match "+cur.who:"Likely AI-cloned voice")+' ('+Math.round(r.e*100)+'%)</h4><p><b>Do NOT share OTP / UPI PIN / money.</b></p><p>Hang up. Call back on the saved number.</p><div class="b">Report to 1930</div><div class="b">cybercrime.gov.in · Chakshu</div>';}
 }
 
-function renderTimeline(){var b=$("tlBody");if(cur.policy==="SKIP"){b.innerHTML='<tr><td colspan="10" style="color:var(--muted)">No windows: this call is not checked.</td></tr>';return;}
-  var wiNow=step-2,html="";R.rows.forEach(function(r,i){var cls=i>wiNow?"future":(i===wiNow&&step<maxStep()?"cur":"");if(r.alert&&i<=wiNow)cls+=" alert";
-    var show=i<=wiNow;html+='<tr class="'+cls+'"><td class="num">'+(i+1)+'</td><td class="num">'+(i*5)+'–'+(i*5+5)+' s</td>'+
-     '<td class="num">'+(show?fmt(r.a,3):"")+'</td><td class="num">'+(show?(cur.s?fmt(r.s,2):"n/a"):"")+'</td><td class="num">'+(show?fmt(r.c,2):"")+'</td>'+
-     '<td class="num">'+(show?fmt(r.f,3):"")+'</td><td class="barcell">'+(show?'<div class="mini"><i style="width:'+(r.f*100)+'%"></i><span class="thr"></span></div>':"")+'</td>'+
-     '<td class="num">'+(show?fmt(r.ema,3):"")+'</td><td>'+(show?'<span class="chip '+r.lvl+'">'+r.lvl+'</span>':"")+'</td><td>'+(show&&r.alert?'<b style="color:var(--crit)">ALERT</b>':(show?"–":""))+'</td></tr>';});
-  b.innerHTML=html;}
+/* display-only block id for the audit badge (the app itself uses a SHA-256 chain) */
+function h32(s){var h=0x811c9dc5;for(var i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,0x01000193)>>>0}return ("0000000"+h.toString(16)).slice(-8);}
 
-function renderTeach(){$("teach").innerHTML='<p>'+cur.teach+'</p><p class="measured">'+cur.measured+'</p>'+
-  (cur.known?'<p class="limit">Shown on purpose: judges should see where the model fails, not only where it works.</p>':'');}
+function wins(){var w=$("wins");if(cur.skip){w.innerHTML='<span style="color:var(--dim);font-size:12.5px">No windows: this call is not checked.</span>';return;}
+  var h="";R.rows.forEach(function(r,i){var c=i<step-1?"done":"";if(i===step-1&&!ended())c="cur";
+    h+='<button class="w '+c+'" data-i="'+i+'"><span>W'+(i+1)+' · '+(i*5)+'–'+(i*5+5)+'s</span>'+(r.alert&&i<step?'<em>ALERT</em>':'')+'</button>';});
+  w.innerHTML=h;w.querySelectorAll(".w").forEach(function(b){b.onclick=function(){stop();step=+b.dataset.i+1;render();}});}
 
-function stepLabel(){var ms=maxStep();var t;
-  if(step===0)t="Call arriving: the policy engine decides whether to check it.";
-  else if(cur.policy==="SKIP")t="Trusted contact: nothing runs.";
-  else if(step===1)t="Answered on speaker: capture starts, all on the phone.";
-  else if(step>=ms)t="Call ended: verdict "+(R.fired!==null?"ALERT at window "+(R.fired+1):"no alert")+", peak "+fmt(R.peak,3)+".";
-  else t="Window "+(step-1)+" of "+R.rows.length+": "+((step-2)*5)+"–"+((step-1)*5)+" s of audio, scored in about 1 s.";
-  $("stepLabel").textContent=t;}
+function render(){if(step>last())step=last();
+  if(!cur.skip&&R.fired!==null&&step-1===R.fired&&!beeped){beeped=true;blocks++;lastHash=h32(lastHash+cur.k+R.peak)+h32(cur.t+blocks);beep();}
+  phone();paint();wins();$("take").innerHTML=cur.take;$("play").textContent=playing?"Pause":"Play";}
+function scen(){var b=$("scen");b.innerHTML="";SC.forEach(function(s){var x=document.createElement("button");x.textContent=s.k+" · "+s.t;x.setAttribute("aria-pressed",s===cur);
+  x.onclick=function(){pick(s)};b.appendChild(x);});}
+function pick(s){cur=s;R=run(s);step=0;beeped=false;stop();scen();render();}
 
-function renderChain(){var c=$("chain");var html='<div class="blk"><b>Genesis</b><code>0000…0000</code></div>';
-  chain.forEach(function(r,i){html+='<div class="blk'+(r.bad?" bad":"")+'"><b>Record #'+i+' · '+r.payload.scenario+' · peak '+r.payload.peak+'</b><code>prev '+r.prev.slice(0,16)+'…</code><code>hash '+r.hash.slice(0,16)+'…</code></div>';});
-  if(!chain.length)html+='<div style="color:var(--muted);font-size:13px">Records appear the moment an alert fires.</div>';c.innerHTML=html;}
+function delay(){return (step===0?1600:2200)/speed;}
+function tick(){if(step>=last()){stop();return;}step++;render();if(step>=last()){stop();return;}timer=setTimeout(tick,delay());}
+function play(){if(step>=last()){step=0;beeped=false;}playing=true;render();timer=setTimeout(tick,delay());}
+function stop(){playing=false;clearTimeout(timer);$("play").textContent="Play";}
+function next(){stop();if(step<last()){step++;render();}}
+function back(){stop();if(step>0){step--;render();}}
+function reset(){stop();step=0;beeped=false;render();}
+function beep(){try{ac=ac||new (window.AudioContext||window.webkitAudioContext)();if(ac.state==="suspended")ac.resume();var t=ac.currentTime;
+  [0,.18,.36].forEach(function(d){var o=ac.createOscillator(),g=ac.createGain();o.frequency.value=1175;g.gain.setValueAtTime(.0001,t+d);g.gain.exponentialRampToValueAtTime(.16,t+d+.02);g.gain.exponentialRampToValueAtTime(.0001,t+d+.14);o.connect(g);g.connect(ac.destination);o.start(t+d);o.stop(t+d+.16);});}catch(e){}}
 
-function render(animate){if(step>maxStep())step=maxStep();renderPhone();renderPipe(animate);renderTimeline();renderTeach();stepLabel();
-  if(cur.policy!=="SKIP"&&R.fired!==null&&step-2===R.fired&&!beeped){beeped=true;beep();
-    appendRecord({scenario:cur.id,number_hash:sha256("+91-demo-"+cur.id).slice(0,16),peak:R.peak.toFixed(3),dominant:R.rows[R.fired].dom,window:R.fired+1});}
-  $("btnPlay").textContent=playing?"❚❚ Pause":"▶ Play";}
-
-/* ---------- playback ---------- */
-function delayFor(s){if(s===0)return 1800;if(s===1)return 1300;return 2300;}
-function tick(){if(step>=maxStep()){stop();return;}step++;render(true);if(step>=maxStep()){stop();return;}timer=setTimeout(tick,delayFor(step)/speed);}
-function play(){if(step>=maxStep()){step=0;beeped=false;}playing=true;render(false);timer=setTimeout(tick,delayFor(step)/speed);}
-function stop(){playing=false;clearTimeout(timer);$("btnPlay").textContent="▶ Play";}
-function next(){stop();if(step<maxStep()){step++;render(true);}}
-function back(){stop();if(step>0){step--;render(false);}}
-function reset(){stop();step=0;beeped=false;render(false);}
-
-function beep(){try{audioCtx=audioCtx||new (window.AudioContext||window.webkitAudioContext)();if(audioCtx.state==="suspended")audioCtx.resume();
-  var t=audioCtx.currentTime;[0,0.18,0.36].forEach(function(d){var o=audioCtx.createOscillator(),g=audioCtx.createGain();o.frequency.value=1175;o.type="sine";
-  g.gain.setValueAtTime(0.0001,t+d);g.gain.exponentialRampToValueAtTime(0.18,t+d+0.02);g.gain.exponentialRampToValueAtTime(0.0001,t+d+0.14);o.connect(g);g.connect(audioCtx.destination);o.start(t+d);o.stop(t+d+0.16);});}catch(e){}}
-
-/* ---------- wiring ---------- */
-$("btnPlay").onclick=function(){playing?stop():play()};$("btnNext").onclick=next;$("btnBack").onclick=back;$("btnReset").onclick=reset;
-document.querySelectorAll(".speed button").forEach(function(b){b.onclick=function(){speed=parseFloat(b.dataset.speed);
-  document.querySelectorAll(".speed button").forEach(function(x){x.setAttribute("aria-pressed",x===b)});}});
-$("btnVerify").onclick=function(){var v=verifyChain();chain.forEach(function(r){r.bad=false});
-  if(v.ok)$("verifyOut").innerHTML='<span class="ok">VALID</span> · '+v.n+' record(s)';else{chain[v.at].bad=true;$("verifyOut").innerHTML='<span class="bad-t">BROKEN at record #'+v.at+'</span> · '+v.why;}renderChain();};
-$("btnTamper").onclick=function(){if(!chain.length){$("verifyOut").textContent="Run an alert scenario first (e.g. key 3).";return;}
-  chain[0].payload=Object.assign({},chain[0].payload,{peak:"0.010"});$("verifyOut").textContent="Record #0 edited: peak changed to 0.010. Now verify.";renderChain();};
-function setView(arch){$("viewSim").hidden=arch;$("viewArch").hidden=!arch;$("tabSim").setAttribute("aria-pressed",!arch);$("tabArch").setAttribute("aria-pressed",arch);if(arch)stop();}
-$("tabSim").onclick=function(){setView(false)};$("tabArch").onclick=function(){setView(true)};
-function toggleTheme(){var r=document.documentElement;r.setAttribute("data-theme",r.getAttribute("data-theme")==="dark"?"light":"dark");}
-$("btnTheme").onclick=toggleTheme;
-document.addEventListener("keydown",function(e){if(e.target.tagName==="INPUT")return;var k=e.key;
-  if(k===" "){e.preventDefault();playing?stop():play();}
-  else if(k==="ArrowRight"){e.preventDefault();next();}
-  else if(k==="ArrowLeft"){e.preventDefault();back();}
-  else if(k==="r"||k==="R")reset();
-  else if(k==="t"||k==="T")toggleTheme();
-  else if(k==="v"||k==="V")setView(!$("viewArch").hidden?false:true);
-  else{var s=SC.filter(function(x){return x.key===k})[0];if(s){setView(false);select(s);}}});
-setInterval(function(){var d=new Date();$("pClock").textContent=String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0");},10000);
-
-renderScenBar();renderChain();render(false);
+$("play").onclick=function(){playing?stop():play()};$("next").onclick=next;$("back").onclick=back;$("reset").onclick=reset;
+document.querySelectorAll(".sp").forEach(function(b){b.onclick=function(){speed=+b.dataset.s;document.querySelectorAll(".sp").forEach(function(x){x.setAttribute("aria-pressed",x===b)})}});
+function theme(){var r=document.documentElement;r.setAttribute("data-theme",r.getAttribute("data-theme")==="dark"?"light":"dark");}
+$("theme").onclick=theme;
+document.addEventListener("keydown",function(e){var k=e.key;
+  if(k===" "){e.preventDefault();playing?stop():play();}else if(k==="ArrowRight"){e.preventDefault();next();}else if(k==="ArrowLeft"){e.preventDefault();back();}
+  else if(k==="r"||k==="R")reset();else if(k==="t"||k==="T")theme();else{var s=SC.filter(function(x){return x.k===k})[0];if(s)pick(s);}});
+window.addEventListener("resize",drawEdges);
+scen();render();requestAnimationFrame(drawEdges);
 })();
 </script>
 </body>
