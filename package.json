@@ -1,8 +1,8 @@
 {
-  "name": "sih26104-clone-detector-simulation",
-  "version": "1.0.0",
+  "name": "swarkavach-simulation",
+  "version": "2.0.0",
   "private": true,
-  "description": "SIH26104 judge-facing voice clone detection pipeline simulation for AICTE Cyber Security Cell",
+  "description": "SIH26104 judge-facing simulation of SwarKavach, the on-device voice-clone shield for Android (phone edition) and its shared detection engine",
   "scripts": {
     "dev": "npx serve .",
     "start": "npx serve ."
